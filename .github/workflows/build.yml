@@ -16,15 +16,18 @@ jobs:
         sudo apt update
         sudo apt install -y build-essential ccache ecj fastjar file g++ gawk gettext git subversion libncurses5-dev libz-dev patch python3 python3-pip unzip zlib1g-dev libssl-dev libglib2.0-dev xsltproc libxml2-utils bc tmux quilt time rsync
 
-    - name: Clone Official GL.iNet SDK
+    - name: Clone SDK & Download Base
       run: |
-        # 直接使用官方穩定的 SDK，不需自己從頭編譯 Linux 核心
-        git clone https://github.com/gl-inet/sdk.git
+        # 1. 將官方腳本庫 Clone 到 gl_sdk 資料夾
+        git clone https://github.com/gl-inet/sdk.git gl_sdk
+        cd gl_sdk
+        # 2. 觸發腳本，正式下載 SFT1200 (Siflower 18.06) 的完整開發包
+        ./download.sh siflower-1806
 
     - name: Update Feeds & Add LuCI Source
       run: |
-        # 進入官方 SDK 的 SFT1200 (Siflower 18.06) 目錄
-        cd sdk/1806/siflower
+        # 進入解壓縮出來的真實 SDK 目錄
+        cd gl_sdk/sdk/1806/siflower
         
         # 獨立抓取 luci-proto-xmm 協議
         mkdir -p package/custom
@@ -38,9 +41,9 @@ jobs:
 
     - name: Configure Drivers
       run: |
-        cd sdk/1806/siflower
+        cd gl_sdk/sdk/1806/siflower
         
-        # 直接寫入你要的 USB 網卡與驅動模組
+        # 寫入 USB 網卡與驅動模組
         cat <<EOF >> .config
         CONFIG_PACKAGE_luci-proto-xmm=m
         CONFIG_PACKAGE_usb-modeswitch=m
@@ -58,7 +61,7 @@ jobs:
 
     - name: Compile
       run: |
-        cd sdk/1806/siflower
+        cd gl_sdk/sdk/1806/siflower
         # 開始編譯指定的 ipk，失敗則單線程重試並印出錯誤
         make -j$(nproc) || make -j1 V=s
 
@@ -67,6 +70,6 @@ jobs:
       with:
         name: sft1200-18.06-drivers
         path: |
-          sdk/1806/siflower/bin/packages/*/*/luci-proto-xmm_*.ipk
-          sdk/1806/siflower/bin/packages/*/*/usb-modeswitch_*.ipk
-          sdk/1806/siflower/bin/targets/siflower/*/packages/kmod-usb-*.ipk
+          gl_sdk/sdk/1806/siflower/bin/packages/*/*/luci-proto-xmm_*.ipk
+          gl_sdk/sdk/1806/siflower/bin/packages/*/*/usb-modeswitch_*.ipk
+          gl_sdk/sdk/1806/siflower/bin/targets/siflower/*/packages/kmod-usb-*.ipk
