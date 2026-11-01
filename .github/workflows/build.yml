@@ -11,34 +11,20 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    # 1. 換成 LVM 磁碟擴容工具，釋放 80GB 以上可用空間
-    - name: Maximize Build Space
-      uses: easimon/maximize-build-space@master
-      with:
-        root-reserve-mb: 512
-        swap-size-mb: 1024
-        remove-dotnet: 'true'
-        remove-android: 'true'
-        remove-haskell: 'true'
-        remove-codeql: 'true'
-        remove-docker-images: 'true'
-
     - name: Install Build Tools
       run: |
         sudo apt update
-        sudo apt install -y build-essential ccache ecj fastjar file g++ gawk gettext git subversion libncurses5-dev libz-dev patch python3 python3-pip python3-setuptools unzip zlib1g-dev libssl-dev libglib2.0-dev xsltproc libxml2-utils bc tmux quilt time rsync
+        sudo apt install -y build-essential ccache ecj fastjar file g++ gawk gettext git subversion libncurses5-dev libz-dev patch python3 python3-pip unzip zlib1g-dev libssl-dev libglib2.0-dev xsltproc libxml2-utils bc tmux quilt time rsync
 
-    - name: Clone gl-infra-builder & Setup Environment
+    - name: Clone Official GL.iNet SDK
       run: |
-        # 2. 替換為有效存取的 Joyist2021 社群備份庫
-        git clone https://github.com/Joyist2021/gl-infra-builder.git
-        cd gl-infra-builder
-        # 建立 Siflower 18.06 的編譯樹
-        python3 setup.py -p siflower-1806 -b siflower-1806
+        # 直接使用官方穩定的 SDK，不需自己從頭編譯 Linux 核心
+        git clone https://github.com/gl-inet/sdk.git
 
     - name: Update Feeds & Add LuCI Source
       run: |
-        cd gl-infra-builder/openwrt-18.06/siflower/openwrt-18.06
+        # 進入官方 SDK 的 SFT1200 (Siflower 18.06) 目錄
+        cd sdk/1806/siflower
         
         # 獨立抓取 luci-proto-xmm 協議
         mkdir -p package/custom
@@ -52,12 +38,9 @@ jobs:
 
     - name: Configure Drivers
       run: |
-        cd gl-infra-builder/openwrt-18.06/siflower/openwrt-18.06
+        cd sdk/1806/siflower
         
-        # 生成 SFT1200 的預設核心設定
-        python3 ../../../scripts/gen_config.py target_siflower_gl-sft1200
-        
-        # 寫入 USB 網卡與驅動模組
+        # 直接寫入你要的 USB 網卡與驅動模組
         cat <<EOF >> .config
         CONFIG_PACKAGE_luci-proto-xmm=m
         CONFIG_PACKAGE_usb-modeswitch=m
@@ -70,22 +53,13 @@ jobs:
         CONFIG_PACKAGE_kmod-usb-wdm=m
         EOF
         
-        # 套用設定檔
+        # 產生標準編譯設定檔
         make defconfig
-        
-        # 3. 移除不需要的 LuCI 介面，大幅減少編譯時間與空間消耗
-        sed -i 's/CONFIG_PACKAGE_luci=y/# CONFIG_PACKAGE_luci is not set/' .config
-        sed -i 's/CONFIG_PACKAGE_luci-ssl=y/# CONFIG_PACKAGE_luci-ssl is not set/' .config
-
-    - name: Download Sources
-      run: |
-        cd gl-infra-builder/openwrt-18.06/siflower/openwrt-18.06
-        make download -j8
 
     - name: Compile
       run: |
-        cd gl-infra-builder/openwrt-18.06/siflower/openwrt-18.06
-        # 先嘗試全速編譯，若失敗則退回單執行緒並輸出詳細日誌
+        cd sdk/1806/siflower
+        # 開始編譯指定的 ipk，失敗則單線程重試並印出錯誤
         make -j$(nproc) || make -j1 V=s
 
     - name: Upload IPKs
@@ -93,6 +67,6 @@ jobs:
       with:
         name: sft1200-18.06-drivers
         path: |
-          gl-infra-builder/openwrt-18.06/siflower/openwrt-18.06/bin/packages/*/custom/luci-proto-xmm_*.ipk
-          gl-infra-builder/openwrt-18.06/siflower/openwrt-18.06/bin/packages/*/base/usb-modeswitch_*.ipk
-          gl-infra-builder/openwrt-18.06/siflower/openwrt-18.06/bin/targets/siflower/gl-sft1200/packages/kmod-usb-*.ipk
+          sdk/1806/siflower/bin/packages/*/*/luci-proto-xmm_*.ipk
+          sdk/1806/siflower/bin/packages/*/*/usb-modeswitch_*.ipk
+          sdk/1806/siflower/bin/targets/siflower/*/packages/kmod-usb-*.ipk
