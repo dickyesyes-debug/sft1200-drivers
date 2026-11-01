@@ -28,14 +28,16 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Remove Broken Packages
+    - name: Remove Broken & Unneeded Packages
       run: |
         cd gl_sdk/sdk/1806/siflower
-        # 徹底刪除會導致 404 的 linux-firmware 以及會報錯的自定義 iproute2 (tc)
+        # 徹底刪除會導致 404 的 firmware、會報錯的 iproute2 以及 Python 語法錯誤的 wireless-regdb
         rm -rf feeds/base/firmware/linux-firmware
         rm -rf package/feeds/base/linux-firmware
         rm -rf feeds/gli_pub/iproute2
         rm -rf package/feeds/gli_pub/iproute2
+        rm -rf feeds/base/firmware/wireless-regdb
+        rm -rf package/feeds/base/wireless-regdb
 
     - name: Configure Drivers
       run: |
