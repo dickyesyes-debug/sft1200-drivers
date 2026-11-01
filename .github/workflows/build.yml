@@ -1,4 +1,4 @@
-name: Build SFT1200 Drivers
+name: Build SFT1200 Drivers Final
 
 on:
   workflow_dispatch:
@@ -12,26 +12,13 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Install Build Tools
-      run: |
-        sudo apt update
-        sudo apt install -y build-essential ccache ecj fastjar file g++ gawk gettext git subversion libncurses5-dev libz-dev patch python3 python3-pip unzip zlib1g-dev libssl-dev libglib2.0-dev xsltproc libxml2-utils bc tmux quilt time rsync
+      run: sudo apt update && sudo apt install -y build-essential ccache ecj fastjar file g++ gawk gettext git subversion libncurses5-dev libz-dev patch python3 python3-pip unzip zlib1g-dev libssl-dev libglib2.0-dev xsltproc libxml2-utils bc tmux quilt time rsync
 
     - name: Download SDK
-      run: |
-        git clone https://github.com sdk
-        cd sdk
-        git checkout refs/tags/v4.3.25 || git checkout -b v4.3.25 origin/v4.3.25 || true
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
+      run: git clone https://github.com sdk && cd sdk && (git checkout refs/tags/v4.3.25 || git checkout -b v4.3.25 origin/v4.3.25 || true) && ./scripts/feeds update -a && ./scripts/feeds install -a
 
     - name: Add LuCI Source
-      run: |
-        cd sdk
-        mkdir -p package/custom
-        cd package/custom
-        git clone --depth 1 https://github.com
-        mv luci/protocols/luci-proto-xmm ./
-        rm -rf luci
+      run: cd sdk && mkdir -p package/custom && cd package/custom && git clone --depth 1 https://github.com && mv luci/protocols/luci-proto-xmm ./ && rm -rf luci
 
     - name: Configure Drivers
       run: |
