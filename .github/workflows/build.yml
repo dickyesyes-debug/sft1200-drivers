@@ -1,4 +1,4 @@
-name: Build SFT1200 Drivers Final
+name: Build SFT1200 4.3.25 Drivers Real SDK
 
 on:
   workflow_dispatch:
@@ -12,35 +12,40 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Install Build Tools
-      run: sudo apt update && sudo apt install -y build-essential ccache ecj fastjar file g++ gawk gettext git subversion libncurses5-dev libz-dev patch python3 python3-pip unzip zlib1g-dev libssl-dev libglib2.0-dev xsltproc libxml2-utils bc tmux quilt time rsync
-
-    - name: Download SDK
-      env:
-        URL_HOST: "github.com"
-        URL_PATH: "gl-inet/imagebuilder-siflower.git"
       run: |
-        git clone https://${URL_HOST}/${URL_PATH} sdk
+        sudo apt update
+        sudo apt install -y build-essential ccache ecj fastjar file g++ gawk gettext git subversion libncurses5-dev libz-dev patch python3 python3-pip unzip zlib1g-dev libssl-dev libglib2.0-dev xsltproc libxml2-utils bc tmux quilt time rsync wget
+
+    - name: Download GL.iNet Official SDK
+      run: |
+        # 複製官方 SDK 中央調度倉庫
+        git clone https://github.com/gl-inet/sdk.git official_sdk
+        cd official_sdk
+        
+        # 下載針對 sft1200 晶片平台 (siflower) 且對應 4.3.25 韌體的特定 SDK 包
+        # 官方指令會下載預編譯好的完整交叉編譯工具鏈環境
+        python3 download.py sft1200
+        
+        # 解壓並將其搬移命名為 sdk 目錄
+        mkdir -p ../sdk
+        tar -xf sft1200/*.tar.xz -C ../sdk --strip-components=1
+
+    - name: Add LuCI Protocols Source
+      run: |
         cd sdk
-        git checkout refs/tags/v4.3.25 || git checkout -b v4.3.25 origin/v4.3.25 || true
         ./scripts/feeds update -a
         ./scripts/feeds install -a
-
-    - name: Add LuCI Source
-      env:
-        LUCI_HOST: "github.com"
-        LUCI_PATH: "openwrt/luci.git"
-      run: |
-        cd sdk
         mkdir -p package/custom
         cd package/custom
-        git clone --depth 1 https://${LUCI_HOST}/${LUCI_PATH}
+        git clone --depth 1 https://github.com
         mv luci/protocols/luci-proto-xmm ./
         rm -rf luci
 
-    - name: Configure Drivers
+    - name: Configure Drivers and Packages
       run: |
         cd sdk
         make defconfig
+        
         cat <<EOF >> .config
         CONFIG_PACKAGE_luci-proto-xmm=m
         CONFIG_PACKAGE_usb-modeswitch=m
@@ -52,22 +57,22 @@ jobs:
         CONFIG_PACKAGE_kmod-usb-net=m
         CONFIG_PACKAGE_kmod-usb-wdm=m
         EOF
+        
         mkdir -p tmp
         make oldconfig < /dev/null
 
-    - name: Compile
+    - name: Compile Packages
       run: |
         cd sdk
-        make tools/install -j$(nproc) || true
-        make toolchain/install -j$(nproc) || true
+        # 在官方官方 SDK 中可以直接編譯驅動軟體包
         make package/custom/luci-proto-xmm/compile V=s
         make package/utils/usb-modeswitch/compile V=s
         make package/kernel/linux/compile V=s
 
-    - name: Upload IPKs
+    - name: Collect and Upload IPKs
       uses: actions/upload-artifact@v4
       with:
-        name: sft1200-4.3.25-drivers
+        name: sft1200-4.3.25-drivers-real
         path: |
           sdk/bin/packages/mipsel_24kc/custom/luci-proto-xmm_*.ipk
           sdk/bin/packages/mipsel_24kc/base/usb-modeswitch_*.ipk
