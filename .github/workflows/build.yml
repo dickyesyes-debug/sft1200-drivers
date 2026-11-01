@@ -28,6 +28,13 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
+    - name: Remove Broken Firmware Package
+      run: |
+        cd gl_sdk/sdk/1806/siflower
+        # 徹底刪除會導致 404 錯誤的 linux-firmware 套件，防止任何依賴去下載它
+        rm -rf feeds/base/firmware/linux-firmware
+        rm -rf package/feeds/base/linux-firmware
+
     - name: Configure Drivers
       run: |
         cd gl_sdk/sdk/1806/siflower
@@ -46,11 +53,6 @@ jobs:
         EOF
         
         make defconfig
-        
-        # 略過會發生 404 錯誤的 linux-firmware 模組
-        echo "CONFIG_PACKAGE_linux-firmware=n" >> .config
-        sed -i 's/CONFIG_PACKAGE_linux-firmware=y/# CONFIG_PACKAGE_linux-firmware is not set/' .config
-        make oldconfig < /dev/null
 
     - name: Compile
       run: |
