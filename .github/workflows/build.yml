@@ -25,8 +25,6 @@ jobs:
     - name: Update Feeds
       run: |
         cd gl_sdk/sdk/1806/siflower
-        
-        # 更新並安裝所有官方 feeds
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
@@ -48,6 +46,11 @@ jobs:
         EOF
         
         make defconfig
+        
+        # 略過會發生 404 錯誤的 linux-firmware 模組
+        echo "CONFIG_PACKAGE_linux-firmware=n" >> .config
+        sed -i 's/CONFIG_PACKAGE_linux-firmware=y/# CONFIG_PACKAGE_linux-firmware is not set/' .config
+        make oldconfig < /dev/null
 
     - name: Compile
       run: |
@@ -60,5 +63,5 @@ jobs:
         name: sft1200-18.06-drivers
         path: |
           gl_sdk/sdk/1806/siflower/bin/packages/*/*/luci-proto-xmm_*.ipk
-          gl_sdk/sdk/1806/siflower/bin/packages/*/*/usb-modeswitch_*.ipk
+          gl_sdk/sdk/1806/siflower/bin/packages/*/*/base/usb-modeswitch_*.ipk
           gl_sdk/sdk/1806/siflower/bin/targets/siflower/*/packages/kmod-usb-*.ipk
