@@ -28,12 +28,14 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Remove Broken Firmware Package
+    - name: Remove Broken Packages
       run: |
         cd gl_sdk/sdk/1806/siflower
-        # 徹底刪除會導致 404 錯誤的 linux-firmware 套件，防止任何依賴去下載它
+        # 徹底刪除會導致 404 的 linux-firmware 以及會報錯的自定義 iproute2 (tc)
         rm -rf feeds/base/firmware/linux-firmware
         rm -rf package/feeds/base/linux-firmware
+        rm -rf feeds/gli_pub/iproute2
+        rm -rf package/feeds/gli_pub/iproute2
 
     - name: Configure Drivers
       run: |
