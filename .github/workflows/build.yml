@@ -14,11 +14,10 @@ jobs:
     - name: Install Build Tools
       run: |
         sudo apt update
-        sudo apt install -y build-essential ccache ecj fastjar file g++ gawk gettext git java-progs subversion libncurses5-dev libz-dev patch python3 python3-pip unzip zlib1g-dev libssl-dev glib2.0-dev xsltproc libxml2-utils-dev bc tmux quilt time rsync
+        sudo apt install -y build-essential ccache ecj fastjar file g++ gawk gettext git subversion libncurses5-dev libz-dev patch python3 python3-pip unzip zlib1g-dev libssl-dev libglib2.0-dev xsltproc libxml2-utils bc tmux quilt time rsync
 
     - name: Download GL.iNet Siflower SDK for 4.3.25
       run: |
-        # 複製 SDK 並強制切換到 4.3.25 版本的穩定分支標籤
         git clone https://github.com sdk
         cd sdk
         git checkout refs/tags/v4.3.25 || git checkout -b v4.3.25 origin/v4.3.25 || true
@@ -37,10 +36,8 @@ jobs:
     - name: Configure Drivers and Packages
       run: |
         cd sdk
-        # 1. 載入 SFT1200 預設配置
         make defconfig
         
-        # 2. 強制寫入你需要的所有驅動模組
         cat <<EOF >> .config
         CONFIG_PACKAGE_luci-proto-xmm=m
         CONFIG_PACKAGE_usb-modeswitch=m
@@ -53,18 +50,15 @@ jobs:
         CONFIG_PACKAGE_kmod-usb-wdm=m
         EOF
         
-        # 3. 執行 oldconfig 補齊底層相依性，並帶入非互動設定
         mkdir -p tmp
         make oldconfig < /dev/null
 
     - name: Compile Packages
       run: |
         cd sdk
-        # 預先編譯工具鏈，避免底層衝突
         make tools/install -j$(nproc) || true
         make toolchain/install -j$(nproc) || true
         
-        # 開始單獨編譯指定的軟體包與內核
         make package/custom/luci-proto-xmm/compile V=s
         make package/utils/usb-modeswitch/compile V=s
         make package/kernel/linux/compile V=s
