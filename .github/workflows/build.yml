@@ -1,0 +1,67 @@
+name: Build SFT1200 4G 5G Drivers
+
+on:
+  workflow_dispatch: # 允許手動點擊按鈕觸發編譯
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Install Build Tools
+      run: |
+        sudo apt update
+        sudo apt install -y build-essential ccache ecj fastjar file g++ gawk gettext git java-progs subversion libncurses5-dev libz-dev patch python3 python3-pip unzip zlib1g-dev libssl-dev glib2.0-dev xsltproc libxml2-utils-dev bc tmux quilt time rsync
+
+    - name: Download GL.iNet Siflower SDK
+      run: |
+        git clone https://github.com sdk
+        cd sdk
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: Add LuCI Protocols Source
+      run: |
+        cd sdk
+        mkdir -p package/custom
+        cd package/custom
+        git clone --depth 1 https://github.com
+        mv luci/protocols/luci-proto-xmm ./
+        rm -rf luci
+
+    - name: Configure Drivers and Packages
+      run: |
+        cd sdk
+        make defconfig
+        # 啟用你需要的驅動與相依套件 (m 代表編譯成獨立 .ipk 安裝包)
+        echo "CONFIG_PACKAGE_luci-proto-xmm=m" >> .config
+        echo "CONFIG_PACKAGE_usb-modeswitch=m" >> .config
+        echo "CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=m" >> .config
+        echo "CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=m" >> .config
+        echo "CONFIG_PACKAGE_kmod-usb-serial-option=m" >> .config
+        echo "CONFIG_PACKAGE_kmod-usb-serial=m" >> .config
+        echo "CONFIG_PACKAGE_kmod-usb-serial-wwan=m" >> .config
+        echo "CONFIG_PACKAGE_kmod-usb-net=m" >> .config
+        echo "CONFIG_PACKAGE_kmod-usb-wdm=m" >> .config
+        make defconfig
+
+    - name: Compile Packages
+      run: |
+        cd sdk
+        # 編譯自訂的 LuCI 套件
+        make package/custom/luci-proto-xmm/compile V=s
+        # 編譯系統核心驅動與 usb-modeswitch
+        make package/utils/usb-modeswitch/compile V=s
+        make package/kernel/linux/compile V=s
+
+    - name: Collect and Upload IPKs
+      uses: actions/upload-artifact@v4
+      with:
+        name: sft1200-4g-5g-drivers
+        path: |
+          sdk/bin/packages/mipsel_24kc/custom/luci-proto-xmm_*.ipk
+          sdk/bin/packages/mipsel_24kc/base/usb-modeswitch_*.ipk
+          sdk/bin/targets/siflower/gl-sft1200/packages/kmod-usb-*.ipk
