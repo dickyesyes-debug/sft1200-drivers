@@ -1,7 +1,7 @@
-name: Build SFT1200 4G 5G Drivers
+name: Build SFT1200 4.3.25 Drivers
 
 on:
-  workflow_dispatch: # 允許手動點擊按鈕觸發編譯
+  workflow_dispatch:
 
 jobs:
   build:
@@ -18,8 +18,10 @@ jobs:
 
     - name: Download GL.iNet Siflower SDK
       run: |
+        # 複製官方 Siflower SDK 倉庫
         git clone https://github.com sdk
         cd sdk
+        # 更新並安裝套件源
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
@@ -28,39 +30,49 @@ jobs:
         cd sdk
         mkdir -p package/custom
         cd package/custom
-        git clone --depth 1 https://github.com
+        # 拉取與 4.3.x 固件（OpenWrt 18.06 基底）相容的 LuCI 協定原始碼
+        git clone --depth 1 -b openwrt-18.06 https://github.com
         mv luci/protocols/luci-proto-xmm ./
         rm -rf luci
 
     - name: Configure Drivers and Packages
       run: |
         cd sdk
+        # 1. 載入 SFT1200 的預設硬體配置
         make defconfig
-        # 啟用你需要的驅動與相依套件 (m 代表編譯成獨立 .ipk 安裝包)
-        echo "CONFIG_PACKAGE_luci-proto-xmm=m" >> .config
-        echo "CONFIG_PACKAGE_usb-modeswitch=m" >> .config
-        echo "CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=m" >> .config
-        echo "CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=m" >> .config
-        echo "CONFIG_PACKAGE_kmod-usb-serial-option=m" >> .config
-        echo "CONFIG_PACKAGE_kmod-usb-serial=m" >> .config
-        echo "CONFIG_PACKAGE_kmod-usb-serial-wwan=m" >> .config
-        echo "CONFIG_PACKAGE_kmod-usb-net=m" >> .config
-        echo "CONFIG_PACKAGE_kmod-usb-wdm=m" >> .config
-        make defconfig
+        
+        # 2. 注入你指定的所有 4G/5G 核心驅動與軟體包
+        cat <<EOF >> .config
+        CONFIG_PACKAGE_luci-proto-xmm=m
+        CONFIG_PACKAGE_usb-modeswitch=m
+        CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=m
+        CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=m
+        CONFIG_PACKAGE_kmod-usb-serial-option=m
+        CONFIG_PACKAGE_kmod-usb-serial=m
+        CONFIG_PACKAGE_kmod-usb-serial-wwan=m
+        CONFIG_PACKAGE_kmod-usb-net=m
+        CONFIG_PACKAGE_kmod-usb-wdm=m
+        EOF
+        
+        # 3. 讓系統自動修復並補齊依賴關係（不可使用 defconfig，否則核心模組會被剔除）
+        make oldconfig
 
-    - name: Compile Packages
+    - name: Compile Toolchain and Packages
       run: |
         cd sdk
-        # 編譯自訂的 LuCI 套件
+        # 準備編譯環境（防止找不到工具鏈報錯）
+        make tools/install -j$(nproc) || true
+        make toolchain/install -j$(nproc) || true
+        
+        # 開始分步編譯指定驅動與套件
         make package/custom/luci-proto-xmm/compile V=s
-        # 編譯系統核心驅動與 usb-modeswitch
         make package/utils/usb-modeswitch/compile V=s
         make package/kernel/linux/compile V=s
 
     - name: Collect and Upload IPKs
       uses: actions/upload-artifact@v4
       with:
-        name: sft1200-4g-5g-drivers
+        name: sft1200-4.3.25-drivers
         path: |
           sdk/bin/packages/mipsel_24kc/custom/luci-proto-xmm_*.ipk
           sdk/bin/packages/mipsel_24kc/base/usb-modeswitch_*.ipk
