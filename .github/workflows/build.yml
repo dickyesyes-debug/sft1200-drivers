@@ -18,24 +18,15 @@ jobs:
 
     - name: Clone SDK & Download Base
       run: |
-        # 1. 將官方腳本庫 Clone 到 gl_sdk 資料夾
         git clone https://github.com/gl-inet/sdk.git gl_sdk
         cd gl_sdk
-        # 2. 觸發腳本，正式下載 SFT1200 (Siflower 18.06) 的完整開發包
         ./download.sh siflower-1806
 
-    - name: Update Feeds & Add LuCI Source
+    - name: Update Feeds
       run: |
-        # 進入解壓縮出來的真實 SDK 目錄
         cd gl_sdk/sdk/1806/siflower
         
-        # 獨立抓取 luci-proto-xmm 協議
-        mkdir -p package/custom
-        git clone --depth 1 https://github.com/openwrt/luci.git /tmp/luci_temp
-        mv /tmp/luci_temp/protocols/luci-proto-xmm package/custom/
-        rm -rf /tmp/luci_temp
-        
-        # 更新並安裝所有依賴
+        # 更新並安裝所有官方 feeds
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
@@ -43,7 +34,7 @@ jobs:
       run: |
         cd gl_sdk/sdk/1806/siflower
         
-        # 寫入 USB 網卡與驅動模組
+        # 寫入 USB 網卡與驅動模組配置
         cat <<EOF >> .config
         CONFIG_PACKAGE_luci-proto-xmm=m
         CONFIG_PACKAGE_usb-modeswitch=m
@@ -56,13 +47,11 @@ jobs:
         CONFIG_PACKAGE_kmod-usb-wdm=m
         EOF
         
-        # 產生標準編譯設定檔
         make defconfig
 
     - name: Compile
       run: |
         cd gl_sdk/sdk/1806/siflower
-        # 開始編譯指定的 ipk，失敗則單線程重試並印出錯誤
         make -j$(nproc) || make -j1 V=s
 
     - name: Upload IPKs
