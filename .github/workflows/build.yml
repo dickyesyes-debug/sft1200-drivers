@@ -5,20 +5,33 @@ on:
 
 jobs:
   build:
-    # 第一重防護：降級回 ubuntu-20.04，使用較舊、較寬容的 GCC 9
-    runs-on: ubuntu-20.04
+    # 策略改變：使用最新的 Runner 以確保秒速派發
+    runs-on: ubuntu-22.04
+    # 關鍵魔法：在 Runner 裡面啟動一個乾淨的 ubuntu:20.04 容器來執行後續所有步驟
+    container: ubuntu:20.04
 
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
+    - name: Prepare Container Environment
+      run: |
+        # 由於容器是極度精簡的，我們需要先手動更新並安裝 sudo 與必要工具
+        apt-get update
+        apt-get install -y sudo tzdata
+        # 設定時區避免 tzdata 卡住安裝
+        ln -fs /usr/share/zoneinfo/Asia/Taipei /etc/localtime
+        dpkg-reconfigure --frontend noninteractive tzdata
+
     - name: Install Build Tools
       run: |
-        sudo apt update
-        sudo apt install -y build-essential ccache ecj fastjar file g++ gawk gettext git subversion libncurses5-dev libz-dev patch python3 python3-pip unzip zlib1g-dev libssl-dev libglib2.0-dev xsltproc libxml2-utils bc tmux quilt time rsync
+        sudo apt-get update
+        sudo apt-get install -y build-essential ccache ecj fastjar file g++ gawk gettext git subversion libncurses5-dev libz-dev patch python3 python3-pip unzip zlib1g-dev libssl-dev libglib2.0-dev xsltproc libxml2-utils bc tmux quilt time rsync wget curl
 
     - name: Clone SDK & Download Base
       run: |
+        # 在容器中 git clone 前，需要設定權限
+        git config --global --add safe.directory '*'
         git clone https://github.com/gl-inet/sdk.git gl_sdk
         cd gl_sdk
         ./download.sh siflower-1806
@@ -32,7 +45,6 @@ jobs:
     - name: Remove All Broken & Unneeded Minefields
       run: |
         cd gl_sdk/sdk/1806/siflower
-        # 移除會導致 404 或編譯錯誤的無關套件
         rm -rf feeds/base/firmware/linux-firmware package/feeds/base/linux-firmware
         rm -rf feeds/base/firmware/ath10k-firmware package/feeds/base/ath10k-firmware
         rm -rf feeds/base/firmware/wireless-regdb package/feeds/base/wireless-regdb
@@ -46,7 +58,6 @@ jobs:
     - name: Global Bypass Werror
       run: |
         cd gl_sdk/sdk/1806/siflower
-        # 第二重防護：在編譯前，暴力搜尋並刪除所有設定檔中的 -Werror (將警告視為錯誤) 參數
         find . -type f -name "CMakeLists.txt" -exec sed -i 's/-Werror//g' {} +
         find . -type f -name "Makefile" -exec sed -i 's/-Werror//g' {} +
 
@@ -54,7 +65,6 @@ jobs:
       run: |
         cd gl_sdk/sdk/1806/siflower
         
-        # 寫入 USB 網卡與 4G/5G 驅動模組配置
         cat <<EOF >> .config
         CONFIG_PACKAGE_luci-proto-xmm=m
         CONFIG_PACKAGE_usb-modeswitch=m
@@ -73,9 +83,12 @@ jobs:
       run: |
         cd gl_sdk/sdk/1806/siflower
         
-        # 第三重防護：直接向編譯器下達指令，強制忽略陣列越界 (-Wno-array-bounds) 等警告
         export HOST_CFLAGS="-O2 -Wno-error -Wno-array-bounds -Wno-stringop-overflow"
         export TARGET_CFLAGS="-O2 -Wno-error -Wno-array-bounds -Wno-stringop-overflow"
+        
+        # 由於在 Docker 容器內以 root 身分執行編譯，OpenWrt 預設會阻擋
+        # 加入 FORCE_UNSAFE_CONFIGURE=1 來允許 root 身分編譯
+        export FORCE_UNSAFE_CONFIGURE=1
         
         make -j$(nproc) || make -j1 V=s
 
