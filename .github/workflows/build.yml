@@ -5,9 +5,7 @@ on:
 
 jobs:
   build:
-    # 策略改變：使用最新的 Runner 以確保秒速派發
     runs-on: ubuntu-22.04
-    # 關鍵魔法：在 Runner 裡面啟動一個乾淨的 ubuntu:20.04 容器來執行後續所有步驟
     container: ubuntu:20.04
 
     steps:
@@ -16,10 +14,8 @@ jobs:
 
     - name: Prepare Container Environment
       run: |
-        # 由於容器是極度精簡的，我們需要先手動更新並安裝 sudo 與必要工具
         apt-get update
         apt-get install -y sudo tzdata
-        # 設定時區避免 tzdata 卡住安裝
         ln -fs /usr/share/zoneinfo/Asia/Taipei /etc/localtime
         dpkg-reconfigure --frontend noninteractive tzdata
 
@@ -30,7 +26,6 @@ jobs:
 
     - name: Clone SDK & Download Base
       run: |
-        # 在容器中 git clone 前，需要設定權限
         git config --global --add safe.directory '*'
         git clone https://github.com/gl-inet/sdk.git gl_sdk
         cd gl_sdk
@@ -54,6 +49,10 @@ jobs:
         rm -rf feeds/gli_pub/openssl package/feeds/gli_pub/openssl
         rm -rf feeds/gli_pub/iproute2 package/feeds/gli_pub/iproute2
         rm -rf feeds/base/openwrt-18.06/package/utils/adb package/feeds/base/adb
+        
+        # 【新增】徹底移除 b43 與 b43legacy 等 Broadcom 無線韌體地雷
+        find . -type d -name "b43legacy-firmware" -prune -exec rm -rf {} +
+        find . -type d -name "b43-firmware" -prune -exec rm -rf {} +
 
     - name: Global Bypass Werror
       run: |
@@ -85,9 +84,6 @@ jobs:
         
         export HOST_CFLAGS="-O2 -Wno-error -Wno-array-bounds -Wno-stringop-overflow"
         export TARGET_CFLAGS="-O2 -Wno-error -Wno-array-bounds -Wno-stringop-overflow"
-        
-        # 由於在 Docker 容器內以 root 身分執行編譯，OpenWrt 預設會阻擋
-        # 加入 FORCE_UNSAFE_CONFIGURE=1 來允許 root 身分編譯
         export FORCE_UNSAFE_CONFIGURE=1
         
         make -j$(nproc) || make -j1 V=s
