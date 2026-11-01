@@ -31,7 +31,7 @@ jobs:
     - name: Remove Broken & Unneeded Packages
       run: |
         cd gl_sdk/sdk/1806/siflower
-        # 徹底刪除會導致 404 或編譯錯誤的額外韌體與套件
+        # 徹底移除所有會導致 404 錯誤、Python 2 語法錯誤或新版 GCC 編譯報錯的套件
         rm -rf feeds/base/firmware/linux-firmware
         rm -rf package/feeds/base/linux-firmware
         rm -rf feeds/base/firmware/ath10k-firmware
@@ -40,12 +40,8 @@ jobs:
         rm -rf package/feeds/gli_pub/iproute2
         rm -rf feeds/base/firmware/wireless-regdb
         rm -rf package/feeds/base/wireless-regdb
-
-    - name: Fix GCC 12/13 Compatibility
-      run: |
-        cd gl_sdk/sdk/1806/siflower
-        # 修正新版 GCC 將警告視為錯誤 (Werror) 導致 libubox 編譯失敗的問題
-        find . -name "Makefile" -exec sed -i 's/-Werror//g' {} +
+        rm -rf feeds/base/kernel/cryptodev-linux
+        rm -rf package/feeds/base/cryptodev-linux
 
     - name: Configure Drivers
       run: |
