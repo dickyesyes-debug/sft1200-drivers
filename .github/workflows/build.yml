@@ -11,16 +11,17 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Free Disk Space (Ubuntu)
-      uses: jlumbroso/free-disk-space@main
+    # 1. 換成 LVM 磁碟擴容工具，釋放 80GB 以上可用空間
+    - name: Maximize Build Space
+      uses: easimon/maximize-build-space@master
       with:
-        tool-cache: true
-        android: true
-        dotnet: true
-        haskell: true
-        large-packages: true
-        docker-images: true
-        swap-storage: true
+        root-reserve-mb: 512
+        swap-size-mb: 1024
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
+        remove-codeql: 'true'
+        remove-docker-images: 'true'
 
     - name: Install Build Tools
       run: |
@@ -29,7 +30,8 @@ jobs:
 
     - name: Clone gl-infra-builder & Setup Environment
       run: |
-        git clone https://github.com/gl-inet/gl-infra-builder.git
+        # 2. 替換為有效存取的 Joyist2021 社群備份庫
+        git clone https://github.com/Joyist2021/gl-infra-builder.git
         cd gl-infra-builder
         # 建立 Siflower 18.06 的編譯樹
         python3 setup.py -p siflower-1806 -b siflower-1806
@@ -70,6 +72,10 @@ jobs:
         
         # 套用設定檔
         make defconfig
+        
+        # 3. 移除不需要的 LuCI 介面，大幅減少編譯時間與空間消耗
+        sed -i 's/CONFIG_PACKAGE_luci=y/# CONFIG_PACKAGE_luci is not set/' .config
+        sed -i 's/CONFIG_PACKAGE_luci-ssl=y/# CONFIG_PACKAGE_luci-ssl is not set/' .config
 
     - name: Download Sources
       run: |
