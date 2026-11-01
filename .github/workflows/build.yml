@@ -31,7 +31,7 @@ jobs:
     - name: Remove Broken & Unneeded Packages
       run: |
         cd gl_sdk/sdk/1806/siflower
-        # 移除所有會導致 404、語法錯誤或編譯失敗的模組與套件
+        # 移除所有會導致 404、相依性缺失或編譯失敗的無關套件
         rm -rf feeds/base/firmware/linux-firmware
         rm -rf package/feeds/base/linux-firmware
         rm -rf feeds/base/firmware/ath10k-firmware
@@ -44,6 +44,8 @@ jobs:
         rm -rf package/feeds/base/cryptodev-linux
         rm -rf feeds/gli_pub/openssl
         rm -rf package/feeds/gli_pub/openssl
+        rm -rf feeds/base/openwrt-18.06/package/utils/adb
+        rm -rf package/feeds/base/adb
 
     - name: Configure Drivers
       run: |
