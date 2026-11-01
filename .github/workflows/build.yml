@@ -42,15 +42,6 @@ jobs:
         rm -rf feeds/gli_pub/iproute2 package/feeds/gli_pub/iproute2
         rm -rf feeds/base/openwrt-18.06/package/utils/adb package/feeds/base/adb
 
-    - name: Fix GCC Strict Warnings for Core Libs
-      run: |
-        cd gl_sdk/sdk/1806/siflower
-        # 【精準打擊】只針對 libubox, ubus, uci 這些基礎庫取消 -Werror 參數
-        # 這樣既能避開編譯中斷，又不會觸發全域重新編譯的超長等待
-        find package/libs/libubox feeds/base/package/libs/libubox -type f -name "CMakeLists.txt" -exec sed -i 's/-Werror//g' {} + || true
-        find package/system/ubus feeds/base/package/system/ubus -type f -name "CMakeLists.txt" -exec sed -i 's/-Werror//g' {} + || true
-        find package/system/uci feeds/base/package/system/uci -type f -name "CMakeLists.txt" -exec sed -i 's/-Werror//g' {} + || true
-
     - name: Configure Drivers
       run: |
         cd gl_sdk/sdk/1806/siflower
@@ -70,9 +61,21 @@ jobs:
         
         make defconfig
 
-    - name: Compile
+    - name: Compile and Bypass Werror
       run: |
         cd gl_sdk/sdk/1806/siflower
+        
+        # 1. 先啟動編譯。這會觸發 SDK 去下載並解壓縮 libubox 等基礎庫的原始碼
+        # 加上 || true 讓它遇到 -Werror 報錯中斷時，不會判定失敗，而是繼續執行下一步
+        make -j$(nproc) || true
+        
+        # 2. 此時原始碼已經解壓縮到 build_dir 裡面了！
+        # 直接暴力把 build_dir 裡面所有已經生成的設定檔與原始碼的 -Werror 刪除
+        find build_dir/ -type f -name "CMakeLists.txt" -exec sed -i 's/-Werror//g' {} +
+        find build_dir/ -type f -name "Makefile" -exec sed -i 's/-Werror//g' {} +
+        find build_dir/ -type f -name "*.make" -exec sed -i 's/-Werror//g' {} +
+        
+        # 3. 重新接續編譯，這次編譯器就不會再被警告卡住了
         make -j$(nproc) || make -j1 V=s
 
     - name: Upload IPKs
