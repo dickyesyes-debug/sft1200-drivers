@@ -1,4 +1,4 @@
-name: Build SFT1200 4.3.25 Drivers
+name: Build SFT1200 4.3.25 4G 5G Drivers
 
 on:
   workflow_dispatch:
@@ -16,12 +16,12 @@ jobs:
         sudo apt update
         sudo apt install -y build-essential ccache ecj fastjar file g++ gawk gettext git java-progs subversion libncurses5-dev libz-dev patch python3 python3-pip unzip zlib1g-dev libssl-dev glib2.0-dev xsltproc libxml2-utils-dev bc tmux quilt time rsync
 
-    - name: Download GL.iNet Siflower SDK
+    - name: Download GL.iNet Siflower SDK for 4.3.25
       run: |
-        # 複製官方 Siflower SDK 倉庫
+        # 複製 SDK 並強制切換到 4.3.25 版本的穩定分支標籤
         git clone https://github.com sdk
         cd sdk
-        # 更新並安裝套件源
+        git checkout refs/tags/v4.3.25 || git checkout -b v4.3.25 origin/v4.3.25 || true
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
@@ -30,18 +30,17 @@ jobs:
         cd sdk
         mkdir -p package/custom
         cd package/custom
-        # 拉取與 4.3.x 固件（OpenWrt 18.06 基底）相容的 LuCI 協定原始碼
-        git clone --depth 1 -b openwrt-18.06 https://github.com
+        git clone --depth 1 https://github.com
         mv luci/protocols/luci-proto-xmm ./
         rm -rf luci
 
     - name: Configure Drivers and Packages
       run: |
         cd sdk
-        # 1. 載入 SFT1200 的預設硬體配置
+        # 1. 載入 SFT1200 預設配置
         make defconfig
         
-        # 2. 注入你指定的所有 4G/5G 核心驅動與軟體包
+        # 2. 強制寫入你需要的所有驅動模組
         cat <<EOF >> .config
         CONFIG_PACKAGE_luci-proto-xmm=m
         CONFIG_PACKAGE_usb-modeswitch=m
@@ -54,17 +53,18 @@ jobs:
         CONFIG_PACKAGE_kmod-usb-wdm=m
         EOF
         
-        # 3. 讓系統自動修復並補齊依賴關係（不可使用 defconfig，否則核心模組會被剔除）
-        make oldconfig
+        # 3. 執行 oldconfig 補齊底層相依性，並帶入非互動設定
+        mkdir -p tmp
+        make oldconfig < /dev/null
 
-    - name: Compile Toolchain and Packages
+    - name: Compile Packages
       run: |
         cd sdk
-        # 準備編譯環境（防止找不到工具鏈報錯）
+        # 預先編譯工具鏈，避免底層衝突
         make tools/install -j$(nproc) || true
         make toolchain/install -j$(nproc) || true
         
-        # 開始分步編譯指定驅動與套件
+        # 開始單獨編譯指定的軟體包與內核
         make package/custom/luci-proto-xmm/compile V=s
         make package/utils/usb-modeswitch/compile V=s
         make package/kernel/linux/compile V=s
