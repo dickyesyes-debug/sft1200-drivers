@@ -1,4 +1,4 @@
-name: Build SFT1200 4.3.25 Drivers Real SDK
+name: Build SFT1200 Drivers Final
 
 on:
   workflow_dispatch:
@@ -11,41 +11,49 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
+    - name: Maximize Build Space
+      uses: easimon/maximize-build-space@master
+      with:
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
+        remove-codeql: 'true'
+
     - name: Install Build Tools
       run: |
         sudo apt update
-        sudo apt install -y build-essential ccache ecj fastjar file g++ gawk gettext git subversion libncurses5-dev libz-dev patch python3 python3-pip unzip zlib1g-dev libssl-dev libglib2.0-dev xsltproc libxml2-utils bc tmux quilt time rsync wget
+        sudo apt install -y build-essential ccache ecj fastjar file g++ gawk gettext git subversion libncurses5-dev libz-dev patch python3 python3-pip python3-setuptools unzip zlib1g-dev libssl-dev libglib2.0-dev xsltproc libxml2-utils bc tmux quilt time rsync
 
-    - name: Download GL.iNet Official SDK
+    - name: Clone gl-infra-builder & Setup Environment
       run: |
-        # 複製官方 SDK 中央調度倉庫
-        git clone https://github.com/gl-inet/sdk.git official_sdk
-        cd official_sdk
-        
-        # 下載針對 sft1200 晶片平台 (siflower) 且對應 4.3.25 韌體的特定 SDK 包
-        # 官方指令會下載預編譯好的完整交叉編譯工具鏈環境
-        python3 download.py sft1200
-        
-        # 解壓並將其搬移命名為 sdk 目錄
-        mkdir -p ../sdk
-        tar -xf sft1200/*.tar.xz -C ../sdk --strip-components=1
+        git clone https://github.com/gl-inet/gl-infra-builder.git
+        cd gl-infra-builder
+        # 建立 Siflower 18.06 的編譯樹，這會自動拉取 GL.iNet 修改過的 OpenWrt 原始碼
+        python3 setup.py -p siflower-1806 -b siflower-1806
 
-    - name: Add LuCI Protocols Source
+    - name: Update Feeds & Add LuCI Source
       run: |
-        cd sdk
+        # 進入建構出來的 OpenWrt 目錄
+        cd gl-infra-builder/openwrt-18.06/siflower/openwrt-18.06
+        
+        # 獨立抓取 luci-proto-xmm 協議
+        mkdir -p package/custom
+        git clone --depth 1 https://github.com/openwrt/luci.git /tmp/luci_temp
+        mv /tmp/luci_temp/protocols/luci-proto-xmm package/custom/
+        rm -rf /tmp/luci_temp
+        
+        # 更新並安裝所有依賴
         ./scripts/feeds update -a
         ./scripts/feeds install -a
-        mkdir -p package/custom
-        cd package/custom
-        git clone --depth 1 https://github.com
-        mv luci/protocols/luci-proto-xmm ./
-        rm -rf luci
 
-    - name: Configure Drivers and Packages
+    - name: Configure Drivers
       run: |
-        cd sdk
-        make defconfig
+        cd gl-infra-builder/openwrt-18.06/siflower/openwrt-18.06
         
+        # 生成 SFT1200 的預設核心設定
+        python3 ../../../scripts/gen_config.py target_siflower_gl-sft1200
+        
+        # 寫入你需要的 USB 網卡與驅動模組
         cat <<EOF >> .config
         CONFIG_PACKAGE_luci-proto-xmm=m
         CONFIG_PACKAGE_usb-modeswitch=m
@@ -58,22 +66,25 @@ jobs:
         CONFIG_PACKAGE_kmod-usb-wdm=m
         EOF
         
-        mkdir -p tmp
-        make oldconfig < /dev/null
+        # 套用設定檔
+        make defconfig
 
-    - name: Compile Packages
+    - name: Download Sources
       run: |
-        cd sdk
-        # 在官方官方 SDK 中可以直接編譯驅動軟體包
-        make package/custom/luci-proto-xmm/compile V=s
-        make package/utils/usb-modeswitch/compile V=s
-        make package/kernel/linux/compile V=s
+        cd gl-infra-builder/openwrt-18.06/siflower/openwrt-18.06
+        make download -j8
 
-    - name: Collect and Upload IPKs
+    - name: Compile
+      run: |
+        cd gl-infra-builder/openwrt-18.06/siflower/openwrt-18.06
+        # 先嘗試全速編譯，若失敗則退回單執行緒並輸出詳細日誌 (V=s) 以利除錯
+        make -j$(nproc) || make -j1 V=s
+
+    - name: Upload IPKs
       uses: actions/upload-artifact@v4
       with:
-        name: sft1200-4.3.25-drivers-real
+        name: sft1200-18.06-drivers
         path: |
-          sdk/bin/packages/mipsel_24kc/custom/luci-proto-xmm_*.ipk
-          sdk/bin/packages/mipsel_24kc/base/usb-modeswitch_*.ipk
-          sdk/bin/targets/siflower/gl-sft1200/packages/kmod-usb-*.ipk
+          gl-infra-builder/openwrt-18.06/siflower/openwrt-18.06/bin/packages/*/custom/luci-proto-xmm_*.ipk
+          gl-infra-builder/openwrt-18.06/siflower/openwrt-18.06/bin/packages/*/base/usb-modeswitch_*.ipk
+          gl-infra-builder/openwrt-18.06/siflower/openwrt-18.06/bin/targets/siflower/gl-sft1200/packages/kmod-usb-*.ipk
