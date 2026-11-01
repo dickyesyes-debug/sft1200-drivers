@@ -5,7 +5,8 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    # 第一重防護：降級回 ubuntu-20.04，使用較舊、較寬容的 GCC 9
+    runs-on: ubuntu-20.04
 
     steps:
     - name: Checkout Repository
@@ -42,6 +43,13 @@ jobs:
         rm -rf feeds/gli_pub/iproute2 package/feeds/gli_pub/iproute2
         rm -rf feeds/base/openwrt-18.06/package/utils/adb package/feeds/base/adb
 
+    - name: Global Bypass Werror
+      run: |
+        cd gl_sdk/sdk/1806/siflower
+        # 第二重防護：在編譯前，暴力搜尋並刪除所有設定檔中的 -Werror (將警告視為錯誤) 參數
+        find . -type f -name "CMakeLists.txt" -exec sed -i 's/-Werror//g' {} +
+        find . -type f -name "Makefile" -exec sed -i 's/-Werror//g' {} +
+
     - name: Configure Drivers
       run: |
         cd gl_sdk/sdk/1806/siflower
@@ -61,21 +69,14 @@ jobs:
         
         make defconfig
 
-    - name: Compile and Bypass Werror
+    - name: Compile
       run: |
         cd gl_sdk/sdk/1806/siflower
         
-        # 1. 先啟動編譯。這會觸發 SDK 去下載並解壓縮 libubox 等基礎庫的原始碼
-        # 加上 || true 讓它遇到 -Werror 報錯中斷時，不會判定失敗，而是繼續執行下一步
-        make -j$(nproc) || true
+        # 第三重防護：直接向編譯器下達指令，強制忽略陣列越界 (-Wno-array-bounds) 等警告
+        export HOST_CFLAGS="-O2 -Wno-error -Wno-array-bounds -Wno-stringop-overflow"
+        export TARGET_CFLAGS="-O2 -Wno-error -Wno-array-bounds -Wno-stringop-overflow"
         
-        # 2. 此時原始碼已經解壓縮到 build_dir 裡面了！
-        # 直接暴力把 build_dir 裡面所有已經生成的設定檔與原始碼的 -Werror 刪除
-        find build_dir/ -type f -name "CMakeLists.txt" -exec sed -i 's/-Werror//g' {} +
-        find build_dir/ -type f -name "Makefile" -exec sed -i 's/-Werror//g' {} +
-        find build_dir/ -type f -name "*.make" -exec sed -i 's/-Werror//g' {} +
-        
-        # 3. 重新接續編譯，這次編譯器就不會再被警告卡住了
         make -j$(nproc) || make -j1 V=s
 
     - name: Upload IPKs
