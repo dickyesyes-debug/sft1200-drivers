@@ -1,4 +1,4 @@
-name: Build SFT1200 4.3.25 4G 5G Drivers
+name: Build SFT1200 Drivers
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ jobs:
         sudo apt update
         sudo apt install -y build-essential ccache ecj fastjar file g++ gawk gettext git subversion libncurses5-dev libz-dev patch python3 python3-pip unzip zlib1g-dev libssl-dev libglib2.0-dev xsltproc libxml2-utils bc tmux quilt time rsync
 
-    - name: Download GL.iNet Siflower SDK for 4.3.25
+    - name: Download SDK
       run: |
         git clone https://github.com sdk
         cd sdk
@@ -24,7 +24,7 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Add LuCI Protocols Source
+    - name: Add LuCI Source
       run: |
         cd sdk
         mkdir -p package/custom
@@ -33,11 +33,10 @@ jobs:
         mv luci/protocols/luci-proto-xmm ./
         rm -rf luci
 
-    - name: Configure Drivers and Packages
+    - name: Configure Drivers
       run: |
         cd sdk
         make defconfig
-        
         cat <<EOF >> .config
         CONFIG_PACKAGE_luci-proto-xmm=m
         CONFIG_PACKAGE_usb-modeswitch=m
@@ -49,21 +48,19 @@ jobs:
         CONFIG_PACKAGE_kmod-usb-net=m
         CONFIG_PACKAGE_kmod-usb-wdm=m
         EOF
-        
         mkdir -p tmp
         make oldconfig < /dev/null
 
-    - name: Compile Packages
+    - name: Compile
       run: |
         cd sdk
         make tools/install -j$(nproc) || true
         make toolchain/install -j$(nproc) || true
-        
         make package/custom/luci-proto-xmm/compile V=s
         make package/utils/usb-modeswitch/compile V=s
         make package/kernel/linux/compile V=s
 
-    - name: Collect and Upload IPKs
+    - name: Upload IPKs
       uses: actions/upload-artifact@v4
       with:
         name: sft1200-4.3.25-drivers
