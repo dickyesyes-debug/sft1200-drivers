@@ -22,7 +22,7 @@ jobs:
     - name: Install Build Tools
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential ccache ecj fastjar file g++ gawk gettext git subversion libncurses5-dev libz-dev patch python3 python3-pip unzip zlib1g-dev libssl-dev libglib2.0-dev xsltproc libxml2-utils bc tmux quilt time rsync wget curl
+        sudo apt-get install -y build-essential ccache ecj fastjar file g++ gawk gettext git subversion libncurses5-dev libz-dev patch python3 python3-pip unzip zlib1g-dev libssl-dev libglib2.0-dev xsltproc libxml2-utils bc tmux quilt time rsync wget curl perl
 
     - name: Clone SDK & Download Base
       run: |
@@ -54,32 +54,34 @@ jobs:
         rm -rf feeds/gli_pub/iproute2 package/feeds/gli_pub/iproute2
         rm -rf feeds/base/openwrt-18.06/package/utils/adb package/feeds/base/adb
         rm -f key-build key-build.pub
-        # 移除會出錯的 batman-adv
         rm -rf package/feeds/base/batman-adv feeds/base/net/batman-adv
+        
+        # 移除路由器實體按鍵模組
+        rm -rf package/kernel/button-hotplug
 
-    - name: Global Bypass Werror
+    - name: Precise Bypass Werror
       run: |
         cd gl_sdk/sdk/1806/siflower
-        find . -type f -name "CMakeLists.txt" -exec sed -i 's/-Werror//g' {} +
-        find . -type f -name "Makefile" -exec sed -i 's/-Werror//g' {} +
+        
+        # 【關鍵修復】改用 perl 的正則表達式，精準過濾「前後都有空白的獨立 -Werror」
+        # 這樣就能避免誤傷 -Werror-implicit-function-declaration 這種有效參數
+        find . -type f -name "CMakeLists.txt" -exec perl -pi -e 's/(^|\s)-Werror($|\s)/ /g' {} +
+        find . -type f -name "Makefile" -exec perl -pi -e 's/(^|\s)-Werror($|\s)/ /g' {} +
 
     - name: Configure Drivers
       run: |
         cd gl_sdk/sdk/1806/siflower
         
-        # 建立基礎的 .config
         make defconfig
         
-        # 強制關閉簽章
         sed -i 's/CONFIG_SIGNED_PACKAGES=y/# CONFIG_SIGNED_PACKAGES is not set/' .config
-        
-        # 【關鍵修復】主動關閉會引發錯誤的無關模組，確保只編譯我們需要的東西
         sed -i 's/CONFIG_PACKAGE_batman-adv=y/# CONFIG_PACKAGE_batman-adv is not set/' .config
         sed -i 's/CONFIG_PACKAGE_batman-adv=m/# CONFIG_PACKAGE_batman-adv is not set/' .config
         sed -i 's/CONFIG_PACKAGE_batctl=y/# CONFIG_PACKAGE_batctl is not set/' .config
         sed -i 's/CONFIG_PACKAGE_batctl=m/# CONFIG_PACKAGE_batctl is not set/' .config
+        sed -i 's/CONFIG_PACKAGE_button-hotplug=y/# CONFIG_PACKAGE_button-hotplug is not set/' .config
+        sed -i 's/CONFIG_PACKAGE_button-hotplug=m/# CONFIG_PACKAGE_button-hotplug is not set/' .config
         
-        # 寫入我們真正需要的 USB 網卡與 4G/5G 驅動模組配置
         cat <<EOF >> .config
         CONFIG_PACKAGE_luci-proto-xmm=m
         CONFIG_PACKAGE_usb-modeswitch=m
@@ -92,7 +94,6 @@ jobs:
         CONFIG_PACKAGE_kmod-usb-wdm=m
         EOF
         
-        # 再次更新設定檔，確保剛剛的修改生效
         make defconfig
 
     - name: Compile
@@ -103,7 +104,6 @@ jobs:
         export TARGET_CFLAGS="-O2 -Wno-error -Wno-array-bounds -Wno-stringop-overflow"
         export FORCE_UNSAFE_CONFIGURE=1
         
-        # 這次如果出錯，讓它顯示詳細錯誤訊息
         make -j$(nproc) || make -j1 V=s
 
     - name: Upload IPKs
