@@ -19,7 +19,7 @@ jobs:
         ln -fs /usr/share/zoneinfo/Asia/Taipei /etc/localtime
         dpkg-reconfigure --frontend noninteractive tzdata
         
-        # 安裝正確的 Python 2
+        # 必須使用 Python 2 才能相容 18.06 的腳本
         apt-get install -y python2 python-is-python2
 
     - name: Install Build Tools
@@ -40,18 +40,28 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
+    - name: Physical Deletion (The ONLY way to avoid 404 dead links)
+      run: |
+        cd gl_sdk/sdk/1806/siflower
+        # 【加回最關鍵的步驟】直接物理刪除，阻止系統去下載那些已經死掉的連結
+        rm -rf feeds/base/firmware/*
+        rm -rf package/feeds/base/linux-firmware
+        rm -rf package/feeds/base/*firmware*
+        rm -rf feeds/base/package/utils/b43-tools package/feeds/base/b43-tools
+        rm -rf package/feeds/base/batman-adv feeds/base/net/batman-adv
+        rm -rf package/libs/openssl feeds/base/package/libs/openssl
+        rm -rf package/kernel/button-hotplug
+
     - name: Configure Drivers
       run: |
         cd gl_sdk/sdk/1806/siflower
         
-        # 1. 產生最基礎、預設的設定檔
         make defconfig
         
-        # 2. 取消所有不必要的模組編譯 (將 =y 或 =m 全部改為 is not set)
-        sed -i 's/=y/# is not set/g' .config
-        sed -i 's/=m/# is not set/g' .config
+        # 強制關閉套件簽章機制，避免 usign 發生 Segmentation fault
+        sed -i 's/CONFIG_SIGNED_PACKAGES=y/# CONFIG_SIGNED_PACKAGES is not set/' .config
         
-        # 3. 只手動將我們需要的 USB 與 4G/5G 驅動加入編譯名單
+        # 寫入真正需要的 USB 與 4G/5G 驅動
         cat <<EOF >> .config
         CONFIG_PACKAGE_luci-proto-xmm=m
         CONFIG_PACKAGE_usb-modeswitch=m
@@ -64,15 +74,11 @@ jobs:
         CONFIG_PACKAGE_kmod-usb-wdm=m
         EOF
         
-        # 4. 再次產生設定檔，這時只會包含我們加入的驅動，不會有其他雜七雜八的套件
         make defconfig
 
     - name: Compile
       run: |
         cd gl_sdk/sdk/1806/siflower
-        
-        # 強制關閉套件簽章機制，避免 usign 發生 Segmentation fault
-        sed -i 's/CONFIG_SIGNED_PACKAGES=y/# CONFIG_SIGNED_PACKAGES is not set/' .config
         
         export HOST_CFLAGS="-O2 -Wno-error -Wno-array-bounds -Wno-stringop-overflow"
         export TARGET_CFLAGS="-O2 -Wno-error -Wno-array-bounds -Wno-stringop-overflow"
