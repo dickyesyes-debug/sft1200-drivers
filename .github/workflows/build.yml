@@ -53,9 +53,9 @@ jobs:
         rm -rf feeds/gli_pub/openssl package/feeds/gli_pub/openssl
         rm -rf feeds/gli_pub/iproute2 package/feeds/gli_pub/iproute2
         rm -rf feeds/base/openwrt-18.06/package/utils/adb package/feeds/base/adb
-        
-        # 移除可能導致 usign 當機的預設金鑰
         rm -f key-build key-build.pub
+        # 移除會出錯的 batman-adv
+        rm -rf package/feeds/base/batman-adv feeds/base/net/batman-adv
 
     - name: Global Bypass Werror
       run: |
@@ -67,6 +67,19 @@ jobs:
       run: |
         cd gl_sdk/sdk/1806/siflower
         
+        # 建立基礎的 .config
+        make defconfig
+        
+        # 強制關閉簽章
+        sed -i 's/CONFIG_SIGNED_PACKAGES=y/# CONFIG_SIGNED_PACKAGES is not set/' .config
+        
+        # 【關鍵修復】主動關閉會引發錯誤的無關模組，確保只編譯我們需要的東西
+        sed -i 's/CONFIG_PACKAGE_batman-adv=y/# CONFIG_PACKAGE_batman-adv is not set/' .config
+        sed -i 's/CONFIG_PACKAGE_batman-adv=m/# CONFIG_PACKAGE_batman-adv is not set/' .config
+        sed -i 's/CONFIG_PACKAGE_batctl=y/# CONFIG_PACKAGE_batctl is not set/' .config
+        sed -i 's/CONFIG_PACKAGE_batctl=m/# CONFIG_PACKAGE_batctl is not set/' .config
+        
+        # 寫入我們真正需要的 USB 網卡與 4G/5G 驅動模組配置
         cat <<EOF >> .config
         CONFIG_PACKAGE_luci-proto-xmm=m
         CONFIG_PACKAGE_usb-modeswitch=m
@@ -79,10 +92,8 @@ jobs:
         CONFIG_PACKAGE_kmod-usb-wdm=m
         EOF
         
+        # 再次更新設定檔，確保剛剛的修改生效
         make defconfig
-        
-        # 【關鍵修復】強制關閉 OpenWrt 的套件簽章功能，避開 usign Segmentation fault
-        sed -i 's/CONFIG_SIGNED_PACKAGES=y/# CONFIG_SIGNED_PACKAGES is not set/' .config
 
     - name: Compile
       run: |
@@ -92,6 +103,7 @@ jobs:
         export TARGET_CFLAGS="-O2 -Wno-error -Wno-array-bounds -Wno-stringop-overflow"
         export FORCE_UNSAFE_CONFIGURE=1
         
+        # 這次如果出錯，讓它顯示詳細錯誤訊息
         make -j$(nproc) || make -j1 V=s
 
     - name: Upload IPKs
