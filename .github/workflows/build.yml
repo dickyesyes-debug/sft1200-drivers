@@ -37,22 +37,25 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Remove All Broken & Unneeded Minefields
+    - name: Scorched Earth (Remove All Potential Minefields)
       run: |
         cd gl_sdk/sdk/1806/siflower
-        rm -rf feeds/base/firmware/linux-firmware package/feeds/base/linux-firmware
-        rm -rf feeds/base/firmware/ath10k-firmware package/feeds/base/ath10k-firmware
-        rm -rf feeds/base/firmware/wireless-regdb package/feeds/base/wireless-regdb
+        rm -rf feeds/base/firmware/*
+        rm -rf package/feeds/base/*firmware*
+        rm -rf feeds/base/package/utils/b43-tools package/feeds/base/b43-tools
         rm -rf feeds/base/kernel/mac80211 package/feeds/base/mac80211
         rm -rf feeds/base/net/hostapd package/feeds/base/hostapd
+        rm -rf feeds/base/net/wpa_supplicant package/feeds/base/wpa_supplicant
+        rm -rf feeds/base/kernel/sound package/feeds/base/sound
+        rm -rf feeds/base/kernel/video package/feeds/base/video
+        rm -rf feeds/base/kernel/drm package/feeds/base/drm
         rm -rf feeds/base/kernel/cryptodev-linux package/feeds/base/cryptodev-linux
         rm -rf feeds/gli_pub/openssl package/feeds/gli_pub/openssl
         rm -rf feeds/gli_pub/iproute2 package/feeds/gli_pub/iproute2
         rm -rf feeds/base/openwrt-18.06/package/utils/adb package/feeds/base/adb
         
-        # 【新增】徹底移除 b43 與 b43legacy 等 Broadcom 無線韌體地雷
-        find . -type d -name "b43legacy-firmware" -prune -exec rm -rf {} +
-        find . -type d -name "b43-firmware" -prune -exec rm -rf {} +
+        # 移除可能導致 usign 當機的預設金鑰
+        rm -f key-build key-build.pub
 
     - name: Global Bypass Werror
       run: |
@@ -77,6 +80,9 @@ jobs:
         EOF
         
         make defconfig
+        
+        # 【關鍵修復】強制關閉 OpenWrt 的套件簽章功能，避開 usign Segmentation fault
+        sed -i 's/CONFIG_SIGNED_PACKAGES=y/# CONFIG_SIGNED_PACKAGES is not set/' .config
 
     - name: Compile
       run: |
