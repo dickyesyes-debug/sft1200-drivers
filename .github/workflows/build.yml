@@ -19,7 +19,7 @@ jobs:
         ln -fs /usr/share/zoneinfo/Asia/Taipei /etc/localtime
         dpkg-reconfigure --frontend noninteractive tzdata
         
-        # 【修正】安裝 Python 2 並將系統預設的 python 指令指向 python2
+        # 安裝正確的 Python 2
         apt-get install -y python2 python-is-python2
 
     - name: Install Build Tools
@@ -40,46 +40,18 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Scorched Earth (Remove All Potential Minefields)
-      run: |
-        cd gl_sdk/sdk/1806/siflower
-        rm -rf feeds/base/firmware/*
-        rm -rf package/feeds/base/*firmware*
-        rm -rf feeds/base/package/utils/b43-tools package/feeds/base/b43-tools
-        rm -rf feeds/base/kernel/mac80211 package/feeds/base/mac80211
-        rm -rf feeds/base/net/hostapd package/feeds/base/hostapd
-        rm -rf feeds/base/net/wpa_supplicant package/feeds/base/wpa_supplicant
-        rm -rf feeds/base/kernel/sound package/feeds/base/sound
-        rm -rf feeds/base/kernel/video package/feeds/base/video
-        rm -rf feeds/base/kernel/drm package/feeds/base/drm
-        rm -rf feeds/base/kernel/cryptodev-linux package/feeds/base/cryptodev-linux
-        rm -rf feeds/gli_pub/openssl package/feeds/gli_pub/openssl
-        rm -rf feeds/gli_pub/iproute2 package/feeds/gli_pub/iproute2
-        rm -rf feeds/base/openwrt-18.06/package/utils/adb package/feeds/base/adb
-        rm -f key-build key-build.pub
-        rm -rf package/feeds/base/batman-adv feeds/base/net/batman-adv
-        rm -rf package/kernel/button-hotplug
-
-    - name: Precise Bypass Werror
-      run: |
-        cd gl_sdk/sdk/1806/siflower
-        find . -type f -name "CMakeLists.txt" -exec perl -pi -e 's/(^|\s)-Werror($|\s)/ /g' {} +
-        find . -type f -name "Makefile" -exec perl -pi -e 's/(^|\s)-Werror($|\s)/ /g' {} +
-
     - name: Configure Drivers
       run: |
         cd gl_sdk/sdk/1806/siflower
         
+        # 1. 產生最基礎、預設的設定檔
         make defconfig
         
-        sed -i 's/CONFIG_SIGNED_PACKAGES=y/# CONFIG_SIGNED_PACKAGES is not set/' .config
-        sed -i 's/CONFIG_PACKAGE_batman-adv=y/# CONFIG_PACKAGE_batman-adv is not set/' .config
-        sed -i 's/CONFIG_PACKAGE_batman-adv=m/# CONFIG_PACKAGE_batman-adv is not set/' .config
-        sed -i 's/CONFIG_PACKAGE_batctl=y/# CONFIG_PACKAGE_batctl is not set/' .config
-        sed -i 's/CONFIG_PACKAGE_batctl=m/# CONFIG_PACKAGE_batctl is not set/' .config
-        sed -i 's/CONFIG_PACKAGE_button-hotplug=y/# CONFIG_PACKAGE_button-hotplug is not set/' .config
-        sed -i 's/CONFIG_PACKAGE_button-hotplug=m/# CONFIG_PACKAGE_button-hotplug is not set/' .config
+        # 2. 取消所有不必要的模組編譯 (將 =y 或 =m 全部改為 is not set)
+        sed -i 's/=y/# is not set/g' .config
+        sed -i 's/=m/# is not set/g' .config
         
+        # 3. 只手動將我們需要的 USB 與 4G/5G 驅動加入編譯名單
         cat <<EOF >> .config
         CONFIG_PACKAGE_luci-proto-xmm=m
         CONFIG_PACKAGE_usb-modeswitch=m
@@ -92,11 +64,15 @@ jobs:
         CONFIG_PACKAGE_kmod-usb-wdm=m
         EOF
         
+        # 4. 再次產生設定檔，這時只會包含我們加入的驅動，不會有其他雜七雜八的套件
         make defconfig
 
     - name: Compile
       run: |
         cd gl_sdk/sdk/1806/siflower
+        
+        # 強制關閉套件簽章機制，避免 usign 發生 Segmentation fault
+        sed -i 's/CONFIG_SIGNED_PACKAGES=y/# CONFIG_SIGNED_PACKAGES is not set/' .config
         
         export HOST_CFLAGS="-O2 -Wno-error -Wno-array-bounds -Wno-stringop-overflow"
         export TARGET_CFLAGS="-O2 -Wno-error -Wno-array-bounds -Wno-stringop-overflow"
