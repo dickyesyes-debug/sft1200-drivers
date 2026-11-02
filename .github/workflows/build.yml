@@ -18,6 +18,9 @@ jobs:
         apt-get install -y sudo tzdata
         ln -fs /usr/share/zoneinfo/Asia/Taipei /etc/localtime
         dpkg-reconfigure --frontend noninteractive tzdata
+        
+        # 【修正】安裝 Python 2 並將系統預設的 python 指令指向 python2
+        apt-get install -y python2 python-is-python2
 
     - name: Install Build Tools
       run: |
@@ -55,16 +58,11 @@ jobs:
         rm -rf feeds/base/openwrt-18.06/package/utils/adb package/feeds/base/adb
         rm -f key-build key-build.pub
         rm -rf package/feeds/base/batman-adv feeds/base/net/batman-adv
-        
-        # 移除路由器實體按鍵模組
         rm -rf package/kernel/button-hotplug
 
     - name: Precise Bypass Werror
       run: |
         cd gl_sdk/sdk/1806/siflower
-        
-        # 【關鍵修復】改用 perl 的正則表達式，精準過濾「前後都有空白的獨立 -Werror」
-        # 這樣就能避免誤傷 -Werror-implicit-function-declaration 這種有效參數
         find . -type f -name "CMakeLists.txt" -exec perl -pi -e 's/(^|\s)-Werror($|\s)/ /g' {} +
         find . -type f -name "Makefile" -exec perl -pi -e 's/(^|\s)-Werror($|\s)/ /g' {} +
 
