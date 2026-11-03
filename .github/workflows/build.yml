@@ -28,7 +28,8 @@ jobs:
 
     - name: Build Drivers as Non-Root User
       run: |
-        sudo -u builder bash -c '
+        # 使用 -E 確保 GITHUB_WORKSPACE 變數能正確傳遞給 builder 使用者
+        sudo -E -u builder bash -c '
           set -e
           cd "$GITHUB_WORKSPACE"
           
@@ -57,20 +58,20 @@ jobs:
           make defconfig
           sed -i "s/CONFIG_SIGNED_PACKAGES=y/# CONFIG_SIGNED_PACKAGES is not set/" .config
           
-          cat <<EOF >> .config
-CONFIG_PACKAGE_luci-proto-xmm=m
-CONFIG_PACKAGE_usb-modeswitch=m
-CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=m
-CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=m
-CONFIG_PACKAGE_kmod-usb-serial-option=m
-CONFIG_PACKAGE_kmod-usb-serial=m
-CONFIG_PACKAGE_kmod-usb-serial-wwan=m
-CONFIG_PACKAGE_kmod-usb-net=m
-CONFIG_PACKAGE_kmod-usb-wdm=m
-EOF
+          # 替換為安全的 echo 指令，避免破壞 YAML 縮排
+          echo "CONFIG_PACKAGE_luci-proto-xmm=m" >> .config
+          echo "CONFIG_PACKAGE_usb-modeswitch=m" >> .config
+          echo "CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=m" >> .config
+          echo "CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=m" >> .config
+          echo "CONFIG_PACKAGE_kmod-usb-serial-option=m" >> .config
+          echo "CONFIG_PACKAGE_kmod-usb-serial=m" >> .config
+          echo "CONFIG_PACKAGE_kmod-usb-serial-wwan=m" >> .config
+          echo "CONFIG_PACKAGE_kmod-usb-net=m" >> .config
+          echo "CONFIG_PACKAGE_kmod-usb-wdm=m" >> .config
+          
           make defconfig
           
-          # 6. 編譯（移除 FORCE_UNSAFE_CONFIGURE）
+          # 6. 編譯
           export HOST_CFLAGS="-O2 -Wno-error -Wno-array-bounds -Wno-stringop-overflow"
           export TARGET_CFLAGS="-O2 -Wno-error -Wno-array-bounds -Wno-stringop-overflow"
           
