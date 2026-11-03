@@ -1,13 +1,374 @@
-name: GL-SFT1200 Workflow Test
+
+name: GL-SFT1200 Opal Modular 4G 5G Build
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  test:
+  build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      BUILDER_REPO: https://github.com/gl-inet/gl-infra-builder.git
+      BUILDER_REF: main
+      BUILD_ROOT: gl-infra-builder
+      OPENWRT_DIR: gl-infra-builder/openwrt-18.06/siflower/openwrt-18.06
+      MAKE_JOBS: 2
+
     steps:
-      - name: Test Workflow
+
+      - name: Free Disk Space
+        shell: bash
         run: |
-          echo "GitHub Actions started successfully"
+          set -eux
+
+          df -h
+
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/local/share/chromium
+          sudo rm -rf /usr/local/share/boost
+
+          sudo apt-get clean
+          sudo apt-get autoremove -y
+          sudo rm -rf /var/lib/apt/lists/*
+          sudo rm -rf /var/cache/apt/archives/*
+          sudo rm -rf /tmp/*
+          sudo rm -rf /var/tmp/*
+
+          docker system prune -af || true
+
+          df -h
+
+      - name: Install Build Dependencies
+        shell: bash
+        run: |
+          set -eux
+
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            build-essential \
+            gcc-9 \
+            g++-9 \
+            gcc-multilib \
+            g++-multilib \
+            binutils \
+            bzip2 \
+            flex \
+            gawk \
+            gettext \
+            git \
+            git-core \
+            libncurses5-dev \
+            libncursesw5-dev \
+            libssl-dev \
+            zlib1g-dev \
+            libelf-dev \
+            libtool \
+            autoconf \
+            automake \
+            pkg-config \
+            python3 \
+            python3-pip \
+            python3-setuptools \
+            python3-yaml \
+            rsync \
+            subversion \
+            unzip \
+            wget \
+            curl \
+            file \
+            time \
+            xsltproc \
+            swig \
+            ccache \
+            patch \
+            perl \
+            tar \
+            xz-utils \
+            jq \
+            gperf \
+            help2man
+
+          sudo update-alternatives \
+            --install /usr/bin/gcc gcc /usr/bin/gcc-9 100
+
+          sudo update-alternatives \
+            --install /usr/bin/g++ g++ /usr/bin/g++-9 100
+
+          gcc --version
+          python3 --version
+
+          df -h
+
+      - name: Validate Repository Variables
+        shell: bash
+        env:
+          XMM_PROTOCOLS_REPO: ${{ vars.XMM_PROTOCOLS_REPO }}
+        run: |
+          set -eux
+
+          if [ -z "$XMM_PROTOCOLS_REPO" ]; then
+            echo "XMM_PROTOCOLS_REPO is not configured"
+            exit 1
+          fi
+
+          echo "Repository configuration validated"
+
+      - name: Clone GL.iNet Infrastructure
+        shell: bash
+        run: |
+          set -eux
+
+          git clone \
+            --depth 1 \
+            --branch "$BUILDER_REF" \
+            "$BUILDER_REPO" \
+            "$BUILD_ROOT"
+
+          cd "$BUILD_ROOT"
+
+          git log -1 --oneline
+
+      - name: Initialize Siflower 18.06
+        shell: bash
+        run: |
+          set -eux
+
+          cd "$BUILD_ROOT"
+
+          python3 setup.py -c config-siflower-18.x.yml
+
+          test -d "$GITHUB_WORKSPACE/$OPENWRT_DIR"
+
+          df -h
+
+      - name: Import XMM Protocol Package
+        shell: bash
+        env:
+          XMM_PROTOCOLS_REPO: ${{ vars.XMM_PROTOCOLS_REPO }}
+        run: |
+          set -eux
+
+          git clone \
+            --depth 1 \
+            "$XMM_PROTOCOLS_REPO" \
+            /tmp/protocol-source
+
+          test -f /tmp/protocol-source/protocols/luci-proto-xmm/Makefile
+
+          mkdir -p "$OPENWRT_DIR/package/custom"
+
+          rm -rf "$OPENWRT_DIR/package/custom/luci-proto-xmm"
+
+          cp -a \
+            /tmp/protocol-source/protocols/luci-proto-xmm \
+            "$OPENWRT_DIR/package/custom/luci-proto-xmm"
+
+          cat > "$OPENWRT_DIR/package/custom/Makefile" <<'EOF'
+          include $(sort $(wildcard $(CURDIR)/*/Makefile))
+          EOF
+
+      - name: Generate SFT1200 Target Configuration
+        shell: bash
+        run: |
+          set -eux
+
+          cd "$OPENWRT_DIR"
+
+          python3 ../../../scripts/gen_config.py \
+            target_siflower_gl-sft1200
+
+          test -f .config
+
+      - name: Update and Install Feeds
+        shell: bash
+        run: |
+          set -eux
+
+          cd "$OPENWRT_DIR"
+
+          ./scripts/feeds update -a
+
+          ./scripts/feeds install -a
+
+      - name: Enable Modular Packages
+        shell: bash
+        run: |
+          set -eux
+
+          cd "$OPENWRT_DIR"
+
+          PACKAGES=(
+            luci-proto-xmm
+            usb-modeswitch
+            kmod-usb-net-cdc-mbim
+            kmod-usb-net-cdc-ncm
+            kmod-usb-serial-option
+            kmod-usb-serial
+            kmod-usb-serial-wwan
+            kmod-usb-net
+            kmod-usb-wdm
+          )
+
+          for package in "${PACKAGES[@]}"; do
+            sed -i "/^CONFIG_PACKAGE_${package}=/d" .config
+            echo "CONFIG_PACKAGE_${package}=m" >> .config
+          done
+
+          make defconfig
+
+          for package in "${PACKAGES[@]}"; do
+            if ! grep -Fxq "CONFIG_PACKAGE_${package}=m" .config; then
+              echo "Package is unavailable or cannot be selected: $package"
+              exit 1
+            fi
+          done
+
+          cp .config "$GITHUB_WORKSPACE/sft1200-modular.config"
+
+      - name: Build OpenWrt Tools
+        shell: bash
+        run: |
+          set -eux
+
+          cd "$OPENWRT_DIR"
+
+          make -j"$MAKE_JOBS" tools/install V=s
+
+          df -h
+
+      - name: Build MIPS Toolchain
+        shell: bash
+        run: |
+          set -eux
+
+          cd "$OPENWRT_DIR"
+
+          make -j"$MAKE_JOBS" toolchain/install V=s
+
+          df -h
+
+      - name: Compile luci-proto-xmm
+        shell: bash
+        run: |
+          set -eux
+
+          cd "$OPENWRT_DIR"
+
+          make -j"$MAKE_JOBS" package/luci-proto-xmm/compile V=s
+
+      - name: Compile usb-modeswitch
+        shell: bash
+        run: |
+          set -eux
+
+          cd "$OPENWRT_DIR"
+
+          make -j"$MAKE_JOBS" package/usb-modeswitch/compile V=s
+
+      - name: Compile USB Kernel Modules
+        shell: bash
+        run: |
+          set -eux
+
+          cd "$OPENWRT_DIR"
+
+          make -j"$MAKE_JOBS" package/kernel/linux/compile V=s
+
+          df -h
+
+      - name: Collect MIPSel 24kc IPK Packages
+        shell: bash
+        run: |
+          set -eux
+
+          cd "$OPENWRT_DIR"
+
+          ARTIFACT_DIR="$RUNNER_TEMP/ipk-artifacts"
+
+          mkdir -p "$ARTIFACT_DIR"
+
+          PACKAGES=(
+            luci-proto-xmm
+            usb-modeswitch
+            kmod-usb-net-cdc-mbim
+            kmod-usb-net-cdc-ncm
+            kmod-usb-serial-option
+            kmod-usb-serial
+            kmod-usb-serial-wwan
+            kmod-usb-net
+            kmod-usb-wdm
+          )
+
+          for package in "${PACKAGES[@]}"; do
+
+            find bin/packages bin/targets \
+              -type f \
+              -name "${package}_*.ipk" \
+              -exec cp -f {} "$ARTIFACT_DIR/" \; \
+              2>/dev/null || true
+
+          done
+
+          for package in "${PACKAGES[@]}"; do
+
+            if ! find "$ARTIFACT_DIR" \
+              -maxdepth 1 \
+              -name "${package}_*.ipk" \
+              -print -quit | grep -q .; then
+
+              echo "Missing IPK package: $package"
+              exit 1
+
+            fi
+
+          done
+
+          echo "Collected IPK packages"
+
+          ls -lh "$ARTIFACT_DIR"
+
+          find "$ARTIFACT_DIR" -type f -name '*.ipk' \
+            -exec sha256sum {} \; \
+            > "$ARTIFACT_DIR/SHA256SUMS"
+
+          cp "$GITHUB_WORKSPACE/sft1200-modular.config" \
+            "$ARTIFACT_DIR/"
+
+          echo "Architecture: mipsel_24kc" \
+            > "$ARTIFACT_DIR/BUILD_INFO.txt"
+
+          echo "Target: GL-SFT1200" \
+            >> "$ARTIFACT_DIR/BUILD_INFO.txt"
+
+          echo "Base: Siflower OpenWrt 18.06" \
+            >> "$ARTIFACT_DIR/BUILD_INFO.txt"
+
+          cat "$ARTIFACT_DIR/BUILD_INFO.txt"
+
+      - name: Upload IPK Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: GL-SFT1200-mipsel-24kc-4G-5G-IPK
+          path: ${{ runner.temp }}/ipk-artifacts/
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 30
+
+      - name: Build Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "GL-SFT1200 build completed"
           df -h
