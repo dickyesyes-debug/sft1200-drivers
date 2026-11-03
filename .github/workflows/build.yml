@@ -69,15 +69,8 @@ jobs:
         export TARGET_CFLAGS="-O2 -Wno-error -Wno-array-bounds -Wno-stringop-overflow"
         export FORCE_UNSAFE_CONFIGURE=1
         
-        # 1. 只編譯必要的工具鏈與編譯器 (絕對不會碰到 openssl 或 firmware)
-        make tools/install -j$(nproc) || make tools/install -j1 V=s
-        make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
-        
-        # 2. 只編譯 Linux 核心 (這步驟會生成驅動模組 kmod)
-        make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
+        # 直接針對 Linux 核心模組與指定的 USB 套件進行打包，避開不存在的工具鏈目標
         make package/kernel/linux/compile -j$(nproc) || make package/kernel/linux/compile -j1 V=s
-        
-        # 3. 指定精準編譯：只打包我們點名的 USB 模組與它的相依套件，其他一概忽略
         make package/usb-modeswitch/compile -j$(nproc) || make package/usb-modeswitch/compile -j1 V=s
         make package/luci-proto-xmm/compile -j$(nproc) || make package/luci-proto-xmm/compile -j1 V=s
 
@@ -86,6 +79,6 @@ jobs:
       with:
         name: sft1200-18.06-drivers
         path: |
-          gl_sdk/sdk/1806/siflower/bin/packages/*/*/luci-proto-xmm_*.ipk
-          gl_sdk/sdk/1806/siflower/bin/packages/*/*/usb-modeswitch_*.ipk
-          gl_sdk/sdk/1806/siflower/bin/targets/siflower/*/packages/kmod-usb-*.ipk
+          gl_sdk/sdk/1806/siflower/bin/**/luci-proto-xmm_*.ipk
+          gl_sdk/sdk/1806/siflower/bin/**/usb-modeswitch_*.ipk
+          gl_sdk/sdk/1806/siflower/bin/**/kmod-usb-*.ipk
