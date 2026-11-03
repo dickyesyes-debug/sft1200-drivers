@@ -1,25 +1,439 @@
 
-name: SFT1200 Non Root Test
+name: SFT1200 Non-Root Driver Build
 
 on:
   workflow_dispatch:
+    inputs:
+      xmm_repo:
+        description: GitHub URL containing luci-proto-xmm
+        required: true
+        type: string
+      xmm_branch:
+        description: Repository branch
+        required: true
+        default: main
+        type: string
 
 permissions:
   contents: read
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    env:
+      TZ: Asia/Taipei
+      SDK_DIR: gl_sdk/sdk/1806/siflower
+      BUILD_JOBS: 2
 
     steps:
-      - name: Check Runner
+
+      - name: Clean Ubuntu Disk
+        shell: bash
         run: |
-          echo "Workflow started"
-          id
+          set -eux
+
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/share/chromium
+
           df -h
 
-      - name: Check Builder
+      - name: Install Build Dependencies
+        shell: bash
         run: |
-          sudo useradd -m -s /bin/bash builder
-          sudo -u builder bash -c 'id'
-          sudo -u builder bash -c 'echo BUILD_OK'
+          set -eux
+
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            build-essential \
+            gcc \
+            g++ \
+            binutils \
+            ccache \
+            ecj \
+            fastjar \
+            file \
+            gawk \
+            gettext \
+            git \
+            subversion \
+            libncurses5-dev \
+            libz-dev \
+            patch \
+            python3 \
+            python3-pip \
+            python3-setuptools \
+            python-is-python3 \
+            unzip \
+            zlib1g-dev \
+            libssl-dev \
+            libglib2.0-dev \
+            xsltproc \
+            libxml2-utils \
+            bc \
+            tmux \
+            quilt \
+            time \
+            rsync \
+            wget \
+            curl \
+            perl \
+            flex \
+            bison \
+            gperf \
+            make \
+            tar \
+            xz-utils \
+            jq \
+            cpio \
+            libelf-dev \
+            device-tree-compiler
+
+          sudo ln -sf /usr/share/zoneinfo/Asia/Taipei /etc/localtime
+
+          python3 --version
+          git --version
+
+          df -h
+
+      - name: Create Builder Account
+        shell: bash
+        run: |
+          set -eux
+
+          if ! id builder >/dev/null 2>&1; then
+            sudo useradd -m -s /bin/bash builder
+          fi
+
+          sudo mkdir -p /home/builder
+
+          sudo chown -R builder:builder /home/builder
+
+          sudo chown -R builder:builder "$GITHUB_WORKSPACE"
+
+          sudo chmod 755 /home/builder
+
+          id builder
+
+          if [ "$(id -u builder)" -eq 0 ]; then
+            echo "ERROR: Builder must not be root"
+            exit 1
+          fi
+
+      - name: Clone GL.iNet SDK
+        shell: bash
+        run: |
+          set -eux
+
+          sudo -u builder env \
+            HOME=/home/builder \
+            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            bash -euo pipefail <<'BUILDER'
+
+          cd "$GITHUB_WORKSPACE"
+
+          git clone \
+            --depth 1 \
+            https://github.com/gl-inet/sdk.git \
+            gl_sdk
+
+          cd gl_sdk
+
+          ./download.sh siflower-1806
+
+          cd sdk/1806/siflower
+
+          test -f Makefile
+          test -d package
+          test -d target
+
+          echo "SDK download completed"
+
+          BUILDER
+
+      - name: Import XMM Protocol
+        shell: bash
+        env:
+          XMM_REPO: ${{ inputs.xmm_repo }}
+          XMM_BRANCH: ${{ inputs.xmm_branch }}
+        run: |
+          set -eux
+
+          sudo -u builder env \
+            HOME=/home/builder \
+            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            XMM_REPO="$XMM_REPO" \
+            XMM_BRANCH="$XMM_BRANCH" \
+            bash -euo pipefail <<'BUILDER'
+
+          cd "$GITHUB_WORKSPACE"
+
+          git clone \
+            --depth 1 \
+            --branch "$XMM_BRANCH" \
+            "$XMM_REPO" \
+            /home/builder/xmm-source
+
+          if [ -f /home/builder/xmm-source/protocols/luci-proto-xmm/Makefile ]; then
+            SOURCE=/home/builder/xmm-source/protocols/luci-proto-xmm
+          elif [ -f /home/builder/xmm-source/luci-proto-xmm/Makefile ]; then
+            SOURCE=/home/builder/xmm-source/luci-proto-xmm
+          elif [ -f /home/builder/xmm-source/Makefile ]; then
+            SOURCE=/home/builder/xmm-source
+          else
+            echo "ERROR: luci-proto-xmm Makefile not found"
+            exit 1
+          fi
+
+          cd "$GITHUB_WORKSPACE/$SDK_DIR"
+
+          mkdir -p package/custom
+
+          rm -rf package/custom/luci-proto-xmm
+
+          cp -a "$SOURCE" package/custom/luci-proto-xmm
+
+          cat > package/custom/Makefile <<'EOF'
+          include $(sort $(wildcard $(CURDIR)/*/Makefile))
+          EOF
+
+          test -f package/custom/luci-proto-xmm/Makefile
+
+          echo "XMM package imported"
+
+          BUILDER
+
+      - name: Update Feeds
+        shell: bash
+        run: |
+          set -eux
+
+          sudo -u builder env \
+            HOME=/home/builder \
+            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            SDK_DIR="$SDK_DIR" \
+            bash -euo pipefail <<'BUILDER'
+
+          cd "$GITHUB_WORKSPACE/$SDK_DIR"
+
+          ./scripts/feeds update -a
+
+          ./scripts/feeds install -a
+
+          echo "Feeds updated"
+
+          BUILDER
+
+      - name: Verify SDK Configuration
+        shell: bash
+        run: |
+          set -eux
+
+          sudo -u builder env \
+            HOME=/home/builder \
+            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            SDK_DIR="$SDK_DIR" \
+            bash -euo pipefail <<'BUILDER'
+
+          cd "$GITHUB_WORKSPACE/$SDK_DIR"
+
+          if [ ! -f .config ]; then
+            make defconfig
+          fi
+
+          test -f .config
+
+          echo "Current target configuration:"
+          grep -E 'CONFIG_TARGET_|CONFIG_ARCH=' .config || true
+
+          BUILDER
+
+      - name: Configure Modular Drivers
+        shell: bash
+        run: |
+          set -eux
+
+          sudo -u builder env \
+            HOME=/home/builder \
+            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            SDK_DIR="$SDK_DIR" \
+            bash -euo pipefail <<'BUILDER'
+
+          cd "$GITHUB_WORKSPACE/$SDK_DIR"
+
+          PACKAGES="
+          luci-proto-xmm
+          usb-modeswitch
+          kmod-usb-net-cdc-mbim
+          kmod-usb-net-cdc-ncm
+          kmod-usb-serial-option
+          kmod-usb-serial
+          kmod-usb-serial-wwan
+          kmod-usb-net
+          kmod-usb-wdm
+          "
+
+          for package in $PACKAGES; do
+            sed -i "/^CONFIG_PACKAGE_${package}=/d" .config
+            echo "CONFIG_PACKAGE_${package}=m" >> .config
+          done
+
+          make defconfig
+
+          for package in $PACKAGES; do
+            if ! grep -Fxq "CONFIG_PACKAGE_${package}=m" .config; then
+              echo "ERROR: Package unavailable: $package"
+              exit 1
+            fi
+          done
+
+          cp .config "$GITHUB_WORKSPACE/sft1200.config"
+
+          echo "All requested package settings verified"
+
+          BUILDER
+
+      - name: Build XMM Protocol
+        shell: bash
+        run: |
+          set -eux
+
+          sudo -u builder env \
+            HOME=/home/builder \
+            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            SDK_DIR="$SDK_DIR" \
+            bash -euo pipefail <<'BUILDER'
+
+          cd "$GITHUB_WORKSPACE/$SDK_DIR"
+
+          make -j2 package/custom/luci-proto-xmm/compile V=s
+
+          BUILDER
+
+      - name: Build USB Mode Switch
+        shell: bash
+        run: |
+          set -eux
+
+          sudo -u builder env \
+            HOME=/home/builder \
+            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            SDK_DIR="$SDK_DIR" \
+            bash -euo pipefail <<'BUILDER'
+
+          cd "$GITHUB_WORKSPACE/$SDK_DIR"
+
+          make -j2 package/usb-modeswitch/compile V=s
+
+          BUILDER
+
+      - name: Build USB Kernel Modules
+        shell: bash
+        run: |
+          set -eux
+
+          sudo -u builder env \
+            HOME=/home/builder \
+            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            SDK_DIR="$SDK_DIR" \
+            bash -euo pipefail <<'BUILDER'
+
+          cd "$GITHUB_WORKSPACE/$SDK_DIR"
+
+          make -j2 package/kernel/linux/compile V=s
+
+          BUILDER
+
+      - name: Collect IPK Files
+        shell: bash
+        run: |
+          set -eux
+
+          sudo mkdir -p "$RUNNER_TEMP/ipk-artifacts"
+
+          sudo chown -R builder:builder "$RUNNER_TEMP/ipk-artifacts"
+
+          sudo -u builder env \
+            HOME=/home/builder \
+            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            RUNNER_TEMP="$RUNNER_TEMP" \
+            SDK_DIR="$SDK_DIR" \
+            bash -euo pipefail <<'BUILDER'
+
+          cd "$GITHUB_WORKSPACE/$SDK_DIR"
+
+          DEST="$RUNNER_TEMP/ipk-artifacts"
+
+          PACKAGES="
+          luci-proto-xmm
+          usb-modeswitch
+          kmod-usb-net-cdc-mbim
+          kmod-usb-net-cdc-ncm
+          kmod-usb-serial-option
+          kmod-usb-serial
+          kmod-usb-serial-wwan
+          kmod-usb-net
+          kmod-usb-wdm
+          "
+
+          for package in $PACKAGES; do
+
+            find bin -type f \
+              -name "${package}_*.ipk" \
+              -exec cp -f {} "$DEST/" \; \
+              2>/dev/null || true
+
+          done
+
+          for package in $PACKAGES; do
+
+            if ! find "$DEST" \
+              -maxdepth 1 \
+              -name "${package}_*.ipk" \
+              -print -quit | grep -q .; then
+
+              echo "ERROR: Missing package $package"
+              exit 1
+
+            fi
+
+          done
+
+          cp "$GITHUB_WORKSPACE/sft1200.config" "$DEST/"
+
+          cd "$DEST"
+
+          sha256sum *.ipk > SHA256SUMS
+
+          printf '%s\n' \
+            "GL-SFT1200" \
+            "Siflower SF19A2890" \
+            "OpenWrt 18.06 SDK" \
+            "Target: mipsel_24kc" \
+            > BUILD_INFO.txt
+
+          ls -lh
+
+          BUILDER
+
+      - name: Upload IPK Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SFT1200-4G-5G-Drivers
+          path: ${{ runner.temp }}/ipk-artifacts/
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 30
+
+      - name: Final Disk Report
+        if: always()
+        shell: bash
+        run: |
+          df -h
+
+          echo "SFT1200 build workflow completed"
