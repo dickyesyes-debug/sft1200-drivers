@@ -18,8 +18,6 @@ jobs:
         apt-get install -y sudo tzdata
         ln -fs /usr/share/zoneinfo/Asia/Taipei /etc/localtime
         dpkg-reconfigure --frontend noninteractive tzdata
-        
-        # 必須安裝 Python 2 確保 18.06 舊環境相容
         apt-get install -y python2 python-is-python2
 
     - name: Install Build Tools
@@ -34,19 +32,19 @@ jobs:
         cd gl_sdk
         ./download.sh siflower-1806
 
-    - name: Update & INSTALL ONLY REQUIRED FEEDS
+    - name: Update & Install Feeds
       run: |
         cd gl_sdk/sdk/1806/siflower
         ./scripts/feeds update -a
+        ./scripts/feeds install -a
         
-        # 【真正的關鍵解法】絕對不使用 install -a。
-        # 只精準安裝我們需要的 luci 協定與 usb-modeswitch，徹底阻絕其他無關套件被載入！
-        ./scripts/feeds install luci-proto-xmm usb-modeswitch
+        # 只精準刪除會引發 404 下載失敗的套件，確保 Makefile 宣告不被破壞
+        rm -rf package/feeds/base/linux-firmware feeds/base/firmware/linux-firmware
+        rm -rf package/feeds/base/batman-adv feeds/base/net/batman-adv
 
     - name: Precise Bypass Werror
       run: |
         cd gl_sdk/sdk/1806/siflower
-        # 保留編譯器警告的修復，確保核心驅動不會因為警告而中斷
         find . -type f -name "CMakeLists.txt" -exec perl -pi -e 's/(^|\s)-Werror($|\s)/ /g' {} +
         find . -type f -name "Makefile" -exec perl -pi -e 's/(^|\s)-Werror($|\s)/ /g' {} +
 
@@ -56,10 +54,8 @@ jobs:
         
         make defconfig
         
-        # 關閉套件簽章避免 usign 當機
         sed -i 's/CONFIG_SIGNED_PACKAGES=y/# CONFIG_SIGNED_PACKAGES is not set/' .config
         
-        # 寫入 USB 與 4G/5G 驅動模組
         cat <<EOF >> .config
         CONFIG_PACKAGE_luci-proto-xmm=m
         CONFIG_PACKAGE_usb-modeswitch=m
@@ -82,7 +78,6 @@ jobs:
         export TARGET_CFLAGS="-O2 -Wno-error -Wno-array-bounds -Wno-stringop-overflow"
         export FORCE_UNSAFE_CONFIGURE=1
         
-        # 現在執行全域編譯，因為沒安裝其他 feeds，系統只會編譯我們剛剛設定好的網卡驅動
         make -j$(nproc) || make -j1 V=s
 
     - name: Upload IPKs
