@@ -19,7 +19,7 @@ jobs:
         ln -fs /usr/share/zoneinfo/Asia/Taipei /etc/localtime
         dpkg-reconfigure --frontend noninteractive tzdata
         
-        # 必須使用 Python 2 才能相容 18.06 的腳本
+        # 必須安裝 Python 2 確保舊環境相容
         apt-get install -y python2 python-is-python2
 
     - name: Install Build Tools
@@ -40,45 +40,11 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Ultimate Scorched Earth (Physical Deletion)
-      run: |
-        cd gl_sdk/sdk/1806/siflower
-        
-        # 1. 刪除 Firmware 與無線相關
-        rm -rf feeds/base/firmware/* package/feeds/base/linux-firmware package/feeds/base/*firmware*
-        rm -rf feeds/base/package/utils/b43-tools package/feeds/base/b43-tools
-        rm -rf feeds/base/kernel/mac80211 package/feeds/base/mac80211
-        rm -rf feeds/base/net/hostapd package/feeds/base/hostapd
-        rm -rf feeds/base/net/wpa_supplicant package/feeds/base/wpa_supplicant
-        
-        # 2. 刪除影音與其他硬體驅動
-        rm -rf feeds/base/kernel/sound package/feeds/base/sound
-        rm -rf feeds/base/kernel/video package/feeds/base/video
-        rm -rf feeds/base/kernel/drm package/feeds/base/drm
-        
-        # 3. 刪除加密與客製化工具 (包含這次報錯的 iproute2 與之前的 openssl)
-        rm -rf feeds/base/kernel/cryptodev-linux package/feeds/base/cryptodev-linux
-        rm -rf feeds/gli_pub/openssl package/feeds/gli_pub/openssl package/libs/openssl feeds/base/package/libs/openssl
-        rm -rf feeds/gli_pub/iproute2 package/feeds/gli_pub/iproute2
-        rm -rf feeds/base/openwrt-18.06/package/utils/adb package/feeds/base/adb
-        
-        # 4. 刪除其他已知報錯地雷
-        rm -f key-build key-build.pub
-        rm -rf package/feeds/base/batman-adv feeds/base/net/batman-adv
-        rm -rf package/kernel/button-hotplug
-
     - name: Configure Drivers
       run: |
         cd gl_sdk/sdk/1806/siflower
         
         make defconfig
-        
-        # 強制關閉套件簽章機制，避免 usign 發生 Segmentation fault
-        sed -i 's/CONFIG_SIGNED_PACKAGES=y/# CONFIG_SIGNED_PACKAGES is not set/' .config
-        
-        # 取消所有不必要的模組編譯 (將 =y 或 =m 全部改為 is not set)
-        sed -i 's/=y/# is not set/g' .config
-        sed -i 's/=m/# is not set/g' .config
         
         # 寫入真正需要的 USB 與 4G/5G 驅動
         cat <<EOF >> .config
@@ -95,7 +61,7 @@ jobs:
         
         make defconfig
 
-    - name: Compile
+    - name: Targeted Compile (Bypass ALL Unrelated Packages)
       run: |
         cd gl_sdk/sdk/1806/siflower
         
@@ -103,7 +69,17 @@ jobs:
         export TARGET_CFLAGS="-O2 -Wno-error -Wno-array-bounds -Wno-stringop-overflow"
         export FORCE_UNSAFE_CONFIGURE=1
         
-        make -j$(nproc) || make -j1 V=s
+        # 1. 只編譯必要的工具鏈與編譯器 (絕對不會碰到 openssl 或 firmware)
+        make tools/install -j$(nproc) || make tools/install -j1 V=s
+        make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
+        
+        # 2. 只編譯 Linux 核心 (這步驟會生成驅動模組 kmod)
+        make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
+        make package/kernel/linux/compile -j$(nproc) || make package/kernel/linux/compile -j1 V=s
+        
+        # 3. 指定精準編譯：只打包我們點名的 USB 模組與它的相依套件，其他一概忽略
+        make package/usb-modeswitch/compile -j$(nproc) || make package/usb-modeswitch/compile -j1 V=s
+        make package/luci-proto-xmm/compile -j$(nproc) || make package/luci-proto-xmm/compile -j1 V=s
 
     - name: Upload IPKs
       uses: actions/upload-artifact@v4
@@ -111,5 +87,5 @@ jobs:
         name: sft1200-18.06-drivers
         path: |
           gl_sdk/sdk/1806/siflower/bin/packages/*/*/luci-proto-xmm_*.ipk
-          gl_sdk/sdk/1806/siflower/bin/packages/*/*/base/usb-modeswitch_*.ipk
+          gl_sdk/sdk/1806/siflower/bin/packages/*/*/usb-modeswitch_*.ipk
           gl_sdk/sdk/1806/siflower/bin/targets/siflower/*/packages/kmod-usb-*.ipk
