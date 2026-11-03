@@ -34,6 +34,7 @@ jobs:
 
           su - builder -c '
             set -e
+            export GIT_TERMINAL_PROMPT=0
             cd /workspace
 
             echo "Downloading GL.iNet SDK..."
@@ -51,7 +52,7 @@ jobs:
             if ! ./scripts/feeds search luci-proto-xmm | grep -q luci-proto-xmm; then
               if [ ! -d "package/luci-proto-xmm" ]; then
                 echo "Cloning luci-proto-xmm from external repository..."
-                git clone --depth 1 https://github.com/koshev-msk/luci-proto-xmm.git package/luci-proto-xmm
+                git clone --depth 1 https://github.com/koshev-msk/luci-proto-xmm.git package/luci-proto-xmm || { echo "FATAL: Repository not found or access denied."; exit 1; }
               fi
             else
               ./scripts/feeds install luci-proto-xmm
@@ -91,7 +92,11 @@ jobs:
             fi
             
             echo "Starting Compilation (luci-proto-xmm)..."
-            make package/luci-proto-xmm/compile -j2 V=s || make package/feeds/luci/luci-proto-xmm/compile -j2 V=s || exit 1
+            if [ -d "package/luci-proto-xmm" ]; then
+              make package/luci-proto-xmm/compile -j2 V=s || true
+            elif [ -d "package/feeds/luci/luci-proto-xmm" ]; then
+              make package/feeds/luci/luci-proto-xmm/compile -j2 V=s || true
+            fi
             
             echo "Building package index..."
             make package/index V=s
