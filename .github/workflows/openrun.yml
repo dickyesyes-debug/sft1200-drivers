@@ -1,18 +1,8 @@
 
-name: SFT1200 Non-Root Driver Build
+name: SFT1200 Non Root Driver Build
 
 on:
   workflow_dispatch:
-    inputs:
-      xmm_repo:
-        description: GitHub URL containing luci-proto-xmm
-        required: true
-        type: string
-      xmm_branch:
-        description: Repository branch
-        required: true
-        default: main
-        type: string
 
 permissions:
   contents: read
@@ -29,7 +19,7 @@ jobs:
 
     steps:
 
-      - name: Clean Ubuntu Disk
+      - name: Clean Disk Space
         shell: bash
         run: |
           set -eux
@@ -42,7 +32,7 @@ jobs:
 
           df -h
 
-      - name: Install Build Dependencies
+      - name: Install Dependencies
         shell: bash
         run: |
           set -eux
@@ -68,7 +58,6 @@ jobs:
             python3 \
             python3-pip \
             python3-setuptools \
-            python-is-python3 \
             unzip \
             zlib1g-dev \
             libssl-dev \
@@ -96,12 +85,9 @@ jobs:
 
           sudo ln -sf /usr/share/zoneinfo/Asia/Taipei /etc/localtime
 
-          python3 --version
-          git --version
-
           df -h
 
-      - name: Create Builder Account
+      - name: Create Builder User
         shell: bash
         run: |
           set -eux
@@ -116,14 +102,12 @@ jobs:
 
           sudo chown -R builder:builder "$GITHUB_WORKSPACE"
 
-          sudo chmod 755 /home/builder
-
-          id builder
-
           if [ "$(id -u builder)" -eq 0 ]; then
-            echo "ERROR: Builder must not be root"
+            echo "ERROR: Builder is root"
             exit 1
           fi
+
+          id builder
 
       - name: Clone GL.iNet SDK
         shell: bash
@@ -137,8 +121,7 @@ jobs:
 
           cd "$GITHUB_WORKSPACE"
 
-          git clone \
-            --depth 1 \
+          git clone --depth 1 \
             https://github.com/gl-inet/sdk.git \
             gl_sdk
 
@@ -152,59 +135,35 @@ jobs:
           test -d package
           test -d target
 
-          echo "SDK download completed"
+          echo "SDK download successful"
 
           BUILDER
 
-      - name: Import XMM Protocol
+      - name: Check XMM Package
         shell: bash
-        env:
-          XMM_REPO: ${{ inputs.xmm_repo }}
-          XMM_BRANCH: ${{ inputs.xmm_branch }}
         run: |
           set -eux
 
           sudo -u builder env \
             HOME=/home/builder \
             GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
-            XMM_REPO="$XMM_REPO" \
-            XMM_BRANCH="$XMM_BRANCH" \
+            SDK_DIR="$SDK_DIR" \
             bash -euo pipefail <<'BUILDER'
-
-          cd "$GITHUB_WORKSPACE"
-
-          git clone \
-            --depth 1 \
-            --branch "$XMM_BRANCH" \
-            "$XMM_REPO" \
-            /home/builder/xmm-source
-
-          if [ -f /home/builder/xmm-source/protocols/luci-proto-xmm/Makefile ]; then
-            SOURCE=/home/builder/xmm-source/protocols/luci-proto-xmm
-          elif [ -f /home/builder/xmm-source/luci-proto-xmm/Makefile ]; then
-            SOURCE=/home/builder/xmm-source/luci-proto-xmm
-          elif [ -f /home/builder/xmm-source/Makefile ]; then
-            SOURCE=/home/builder/xmm-source
-          else
-            echo "ERROR: luci-proto-xmm Makefile not found"
-            exit 1
-          fi
 
           cd "$GITHUB_WORKSPACE/$SDK_DIR"
 
-          mkdir -p package/custom
+          XMM_MAKEFILE=$(find package feeds -type f \
+            -path '*/luci-proto-xmm/Makefile' \
+            -print -quit 2>/dev/null || true)
 
-          rm -rf package/custom/luci-proto-xmm
+          if [ -z "$XMM_MAKEFILE" ]; then
+            echo "ERROR: luci-proto-xmm not found in SDK"
+            echo "The real XMM source repository is required."
+            exit 1
+          fi
 
-          cp -a "$SOURCE" package/custom/luci-proto-xmm
-
-          cat > package/custom/Makefile <<'EOF'
-          include $(sort $(wildcard $(CURDIR)/*/Makefile))
-          EOF
-
-          test -f package/custom/luci-proto-xmm/Makefile
-
-          echo "XMM package imported"
+          echo "Found XMM package:"
+          echo "$XMM_MAKEFILE"
 
           BUILDER
 
@@ -225,11 +184,9 @@ jobs:
 
           ./scripts/feeds install -a
 
-          echo "Feeds updated"
-
           BUILDER
 
-      - name: Verify SDK Configuration
+      - name: Configure SFT1200 Packages
         shell: bash
         run: |
           set -eux
@@ -245,26 +202,6 @@ jobs:
           if [ ! -f .config ]; then
             make defconfig
           fi
-
-          test -f .config
-
-          echo "Current target configuration:"
-          grep -E 'CONFIG_TARGET_|CONFIG_ARCH=' .config || true
-
-          BUILDER
-
-      - name: Configure Modular Drivers
-        shell: bash
-        run: |
-          set -eux
-
-          sudo -u builder env \
-            HOME=/home/builder \
-            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
-            SDK_DIR="$SDK_DIR" \
-            bash -euo pipefail <<'BUILDER'
-
-          cd "$GITHUB_WORKSPACE/$SDK_DIR"
 
           PACKAGES="
           luci-proto-xmm
@@ -287,14 +224,14 @@ jobs:
 
           for package in $PACKAGES; do
             if ! grep -Fxq "CONFIG_PACKAGE_${package}=m" .config; then
-              echo "ERROR: Package unavailable: $package"
+              echo "ERROR: Package configuration failed: $package"
               exit 1
             fi
           done
 
           cp .config "$GITHUB_WORKSPACE/sft1200.config"
 
-          echo "All requested package settings verified"
+          echo "Configuration completed"
 
           BUILDER
 
@@ -311,7 +248,7 @@ jobs:
 
           cd "$GITHUB_WORKSPACE/$SDK_DIR"
 
-          make -j2 package/custom/luci-proto-xmm/compile V=s
+          make -j2 package/luci-proto-xmm/compile V=s
 
           BUILDER
 
@@ -349,14 +286,14 @@ jobs:
 
           BUILDER
 
-      - name: Collect IPK Files
+      - name: Collect IPK Packages
         shell: bash
         run: |
           set -eux
 
           sudo mkdir -p "$RUNNER_TEMP/ipk-artifacts"
 
-          sudo chown -R builder:builder "$RUNNER_TEMP/ipk-artifacts"
+          sudo chown builder:builder "$RUNNER_TEMP/ipk-artifacts"
 
           sudo -u builder env \
             HOME=/home/builder \
@@ -392,8 +329,7 @@ jobs:
 
           for package in $PACKAGES; do
 
-            if ! find "$DEST" \
-              -maxdepth 1 \
+            if ! find "$DEST" -maxdepth 1 \
               -name "${package}_*.ipk" \
               -print -quit | grep -q .; then
 
@@ -411,10 +347,10 @@ jobs:
           sha256sum *.ipk > SHA256SUMS
 
           printf '%s\n' \
-            "GL-SFT1200" \
+            "GL-SFT1200 Opal" \
             "Siflower SF19A2890" \
-            "OpenWrt 18.06 SDK" \
-            "Target: mipsel_24kc" \
+            "OpenWrt 18.06" \
+            "mipsel_24kc" \
             > BUILD_INFO.txt
 
           ls -lh
@@ -435,5 +371,4 @@ jobs:
         shell: bash
         run: |
           df -h
-
-          echo "SFT1200 build workflow completed"
+          echo "Build completed"
