@@ -1,0 +1,146 @@
+name: Build GL-SFT1200 Modems IPKs
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Free Disk Space (Host)
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/powershell
+          df -h
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Build Packages inside Ubuntu 20.04 Container
+        run: |
+          cat << 'EOF' > build_script.sh
+          #!/bin/bash
+          set -e
+
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y build-essential curl wget git python2 python3 python-is-python3 unzip gawk gettext libssl-dev zlib1g-dev libncurses5-dev rsync subversion time sudo
+
+          useradd -m -s /bin/bash builder
+          chown -R builder:builder /workspace
+
+          su - builder -c '
+            set -e
+            cd /workspace
+
+            echo "Downloading GL.iNet SDK..."
+            git clone https://github.com/gl-inet/sdk.git gl_sdk
+            cd gl_sdk
+            ./download.sh siflower-1806
+            
+            cd sdk/1806/siflower
+            
+            echo "Updating and installing feeds..."
+            ./scripts/feeds update -a
+            ./scripts/feeds install -a
+            
+            echo "Checking luci-proto-xmm availability..."
+            if ! ./scripts/feeds search luci-proto-xmm | grep -q luci-proto-xmm; then
+              if [ ! -d "package/luci-proto-xmm" ] && [ ! -d "package/feeds/luci/luci-proto-xmm" ]; then
+                echo "FATAL ERROR: luci-proto-xmm is not present in standard GL.iNet SDK feeds."
+                echo "Please provide a valid Git repository to clone the package."
+                exit 1
+              fi
+            else
+              ./scripts/feeds install luci-proto-xmm
+            fi
+            
+            ./scripts/feeds install usb-modeswitch
+
+            echo "Generating .config..."
+            if [ -f configs/config-siflower-1806 ]; then
+              cp configs/config-siflower-1806 .config
+            else
+              make defconfig
+            fi
+            
+            cat << "CFG" >> .config
+            CONFIG_PACKAGE_luci-proto-xmm=m
+            CONFIG_PACKAGE_usb-modeswitch=m
+            CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=m
+            CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=m
+            CONFIG_PACKAGE_kmod-usb-serial-option=m
+            CONFIG_PACKAGE_kmod-usb-serial=m
+            CONFIG_PACKAGE_kmod-usb-serial-wwan=m
+            CONFIG_PACKAGE_kmod-usb-net=m
+            CONFIG_PACKAGE_kmod-usb-wdm=m
+            CFG
+            
+            make defconfig
+
+            echo "Starting Compilation (Kernel Modules)..."
+            make package/kernel/linux/compile -j2 V=s || exit 1
+            
+            echo "Starting Compilation (usb-modeswitch)..."
+            if [ -d "package/utils/usb-modeswitch" ]; then
+              make package/utils/usb-modeswitch/compile -j2 V=s || exit 1
+            else
+              make package/usb-modeswitch/compile -j2 V=s || exit 1
+            fi
+            
+            echo "Starting Compilation (luci-proto-xmm)..."
+            if [ -d "package/feeds/luci/luci-proto-xmm" ]; then
+              make package/feeds/luci/luci-proto-xmm/compile -j2 V=s || true
+            else
+              make package/luci-proto-xmm/compile -j2 V=s || true
+            fi
+            
+            echo "Building package index..."
+            make package/index V=s
+            
+            echo "Collecting IPK files..."
+            mkdir -p /workspace/output_ipks
+            find bin/ -type f -name "luci-proto-xmm*.ipk" -exec cp {} /workspace/output_ipks/ \;
+            find bin/ -type f -name "usb-modeswitch*.ipk" -exec cp {} /workspace/output_ipks/ \;
+            find bin/ -type f -name "kmod-usb-net-cdc-mbim*.ipk" -exec cp {} /workspace/output_ipks/ \;
+            find bin/ -type f -name "kmod-usb-net-cdc-ncm*.ipk" -exec cp {} /workspace/output_ipks/ \;
+            find bin/ -type f -name "kmod-usb-serial-option*.ipk" -exec cp {} /workspace/output_ipks/ \;
+            find bin/ -type f -name "kmod-usb-serial_*.ipk" -exec cp {} /workspace/output_ipks/ \;
+            find bin/ -type f -name "kmod-usb-serial-wwan*.ipk" -exec cp {} /workspace/output_ipks/ \;
+            find bin/ -type f -name "kmod-usb-net_*.ipk" -exec cp {} /workspace/output_ipks/ \;
+            find bin/ -type f -name "kmod-usb-wdm*.ipk" -exec cp {} /workspace/output_ipks/ \;
+            
+            echo "Verifying IPK integrity..."
+            cd /workspace/output_ipks
+            REQUIRED_PKGS=("luci-proto-xmm" "usb-modeswitch" "kmod-usb-net-cdc-mbim" "kmod-usb-net-cdc-ncm" "kmod-usb-serial-option" "kmod-usb-serial" "kmod-usb-serial-wwan" "kmod-usb-net" "kmod-usb-wdm")
+            MISSING=0
+            
+            for pkg in "${REQUIRED_PKGS[@]}"; do
+              if ! ls ${pkg}*.ipk 1> /dev/null 2>&1; then
+                echo "ERROR: Package $pkg was NOT generated."
+                MISSING=1
+              else
+                echo "SUCCESS: Found $pkg"
+              fi
+            done
+            
+            if [ $MISSING -eq 1 ]; then
+              echo "FATAL: One or more required packages are missing."
+              exit 1
+            fi
+            
+            sha256sum *.ipk > sha256sums.txt
+          '
+          EOF
+          chmod +x build_script.sh
+          docker run --rm -v ${{ github.workspace }}:/workspace ubuntu:20.04 /workspace/build_script.sh
+
+      - name: Upload IPKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: SFT1200-Modem-IPKs
+          path: output_ipks/
+          if-no-files-found: error
