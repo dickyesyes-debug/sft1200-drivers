@@ -14,7 +14,7 @@ jobs:
 
     env:
       TZ: Asia/Taipei
-      SDK_DIR: gl_sdk/sdk/1806/siflower
+      SDK_ROOT: /home/builder/gl_sdk/sdk/1806/siflower
       BUILD_JOBS: 2
 
     steps:
@@ -32,7 +32,7 @@ jobs:
 
           df -h
 
-      - name: Install Dependencies
+      - name: Install Build Dependencies
         shell: bash
         run: |
           set -eux
@@ -85,6 +85,8 @@ jobs:
 
           sudo ln -sf /usr/share/zoneinfo/Asia/Taipei /etc/localtime
 
+          python3 --version
+          git --version
           df -h
 
       - name: Create Builder User
@@ -99,15 +101,30 @@ jobs:
           sudo mkdir -p /home/builder
 
           sudo chown -R builder:builder /home/builder
-
-          sudo chown -R builder:builder "$GITHUB_WORKSPACE"
+          sudo chmod 755 /home/builder
 
           if [ "$(id -u builder)" -eq 0 ]; then
-            echo "ERROR: Builder is root"
+            echo "ERROR: Builder cannot be root"
             exit 1
           fi
 
           id builder
+
+      - name: Verify Builder Permissions
+        shell: bash
+        run: |
+          set -eux
+
+          sudo -u builder bash -c '
+            cd /home/builder
+            mkdir -p permission-test
+            touch permission-test/test.txt
+            test -f permission-test/test.txt
+            rm -rf permission-test
+            id
+          '
+
+          echo "Builder permission test passed"
 
       - name: Clone GL.iNet SDK
         shell: bash
@@ -116,54 +133,29 @@ jobs:
 
           sudo -u builder env \
             HOME=/home/builder \
-            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
             bash -euo pipefail <<'BUILDER'
 
-          cd "$GITHUB_WORKSPACE"
+          cd /home/builder
 
-          git clone --depth 1 \
+          git clone \
+            --depth 1 \
             https://github.com/gl-inet/sdk.git \
             gl_sdk
 
-          cd gl_sdk
+          cd /home/builder/gl_sdk
+
+          test -f download.sh
 
           ./download.sh siflower-1806
+
+          test -d sdk/1806/siflower
 
           cd sdk/1806/siflower
 
           test -f Makefile
           test -d package
-          test -d target
 
-          echo "SDK download successful"
-
-          BUILDER
-
-      - name: Check XMM Package
-        shell: bash
-        run: |
-          set -eux
-
-          sudo -u builder env \
-            HOME=/home/builder \
-            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
-            SDK_DIR="$SDK_DIR" \
-            bash -euo pipefail <<'BUILDER'
-
-          cd "$GITHUB_WORKSPACE/$SDK_DIR"
-
-          XMM_MAKEFILE=$(find package feeds -type f \
-            -path '*/luci-proto-xmm/Makefile' \
-            -print -quit 2>/dev/null || true)
-
-          if [ -z "$XMM_MAKEFILE" ]; then
-            echo "ERROR: luci-proto-xmm not found in SDK"
-            echo "The real XMM source repository is required."
-            exit 1
-          fi
-
-          echo "Found XMM package:"
-          echo "$XMM_MAKEFILE"
+          echo "GL.iNet SDK download completed"
 
           BUILDER
 
@@ -174,34 +166,80 @@ jobs:
 
           sudo -u builder env \
             HOME=/home/builder \
-            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
-            SDK_DIR="$SDK_DIR" \
+            SDK_ROOT="$SDK_ROOT" \
             bash -euo pipefail <<'BUILDER'
 
-          cd "$GITHUB_WORKSPACE/$SDK_DIR"
+          cd "$SDK_ROOT"
 
           ./scripts/feeds update -a
 
           ./scripts/feeds install -a
 
+          echo "Feeds update completed"
+
           BUILDER
 
-      - name: Configure SFT1200 Packages
+      - name: Locate XMM Protocol
         shell: bash
         run: |
           set -eux
 
           sudo -u builder env \
             HOME=/home/builder \
-            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
-            SDK_DIR="$SDK_DIR" \
+            SDK_ROOT="$SDK_ROOT" \
             bash -euo pipefail <<'BUILDER'
 
-          cd "$GITHUB_WORKSPACE/$SDK_DIR"
+          cd "$SDK_ROOT"
 
-          if [ ! -f .config ]; then
-            make defconfig
+          XMM_FILE=$(find package feeds \
+            -type f \
+            -path '*/luci-proto-xmm/Makefile' \
+            -print -quit 2>/dev/null || true)
+
+          if [ -z "$XMM_FILE" ]; then
+            echo "ERROR: luci-proto-xmm source not found"
+            echo "Please add the official XMM package source."
+            exit 1
           fi
+
+          echo "XMM package found:"
+          echo "$XMM_FILE"
+
+          BUILDER
+
+      - name: Generate SFT1200 Configuration
+        shell: bash
+        run: |
+          set -eux
+
+          sudo -u builder env \
+            HOME=/home/builder \
+            bash -euo pipefail <<'BUILDER'
+
+          cd /home/builder/gl_sdk
+
+          if [ -f scripts/gen_config.py ]; then
+            python3 scripts/gen_config.py target_siflower_gl-sft1200
+          else
+            echo "No gen_config.py found in SDK"
+            echo "Checking existing Siflower configuration"
+          fi
+
+          BUILDER
+
+      - name: Configure Modular Packages
+        shell: bash
+        run: |
+          set -eux
+
+          sudo -u builder env \
+            HOME=/home/builder \
+            SDK_ROOT="$SDK_ROOT" \
+            bash -euo pipefail <<'BUILDER'
+
+          cd "$SDK_ROOT"
+
+          make defconfig
 
           PACKAGES="
           luci-proto-xmm
@@ -224,14 +262,14 @@ jobs:
 
           for package in $PACKAGES; do
             if ! grep -Fxq "CONFIG_PACKAGE_${package}=m" .config; then
-              echo "ERROR: Package configuration failed: $package"
+              echo "ERROR: Package not enabled: $package"
               exit 1
             fi
           done
 
-          cp .config "$GITHUB_WORKSPACE/sft1200.config"
+          cp .config /home/builder/sft1200.config
 
-          echo "Configuration completed"
+          echo "Modular package configuration completed"
 
           BUILDER
 
@@ -242,13 +280,21 @@ jobs:
 
           sudo -u builder env \
             HOME=/home/builder \
-            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
-            SDK_DIR="$SDK_DIR" \
+            SDK_ROOT="$SDK_ROOT" \
             bash -euo pipefail <<'BUILDER'
 
-          cd "$GITHUB_WORKSPACE/$SDK_DIR"
+          cd "$SDK_ROOT"
 
-          make -j2 package/luci-proto-xmm/compile V=s
+          XMM_FILE=$(find package feeds \
+            -type f \
+            -path '*/luci-proto-xmm/Makefile' \
+            -print -quit)
+
+          XMM_DIR=$(dirname "$XMM_FILE")
+
+          RELATIVE_DIR="${XMM_DIR#./}"
+
+          make -j2 "$RELATIVE_DIR/compile" V=s
 
           BUILDER
 
@@ -259,11 +305,10 @@ jobs:
 
           sudo -u builder env \
             HOME=/home/builder \
-            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
-            SDK_DIR="$SDK_DIR" \
+            SDK_ROOT="$SDK_ROOT" \
             bash -euo pipefail <<'BUILDER'
 
-          cd "$GITHUB_WORKSPACE/$SDK_DIR"
+          cd "$SDK_ROOT"
 
           make -j2 package/usb-modeswitch/compile V=s
 
@@ -276,11 +321,10 @@ jobs:
 
           sudo -u builder env \
             HOME=/home/builder \
-            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
-            SDK_DIR="$SDK_DIR" \
+            SDK_ROOT="$SDK_ROOT" \
             bash -euo pipefail <<'BUILDER'
 
-          cd "$GITHUB_WORKSPACE/$SDK_DIR"
+          cd "$SDK_ROOT"
 
           make -j2 package/kernel/linux/compile V=s
 
@@ -297,14 +341,11 @@ jobs:
 
           sudo -u builder env \
             HOME=/home/builder \
-            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
-            RUNNER_TEMP="$RUNNER_TEMP" \
-            SDK_DIR="$SDK_DIR" \
+            SDK_ROOT="$SDK_ROOT" \
+            DEST="$RUNNER_TEMP/ipk-artifacts" \
             bash -euo pipefail <<'BUILDER'
 
-          cd "$GITHUB_WORKSPACE/$SDK_DIR"
-
-          DEST="$RUNNER_TEMP/ipk-artifacts"
+          cd "$SDK_ROOT"
 
           PACKAGES="
           luci-proto-xmm
@@ -329,18 +370,18 @@ jobs:
 
           for package in $PACKAGES; do
 
-            if ! find "$DEST" -maxdepth 1 \
+            if ! find "$DEST" \
+              -maxdepth 1 \
               -name "${package}_*.ipk" \
               -print -quit | grep -q .; then
 
-              echo "ERROR: Missing package $package"
+              echo "ERROR: Missing IPK: $package"
               exit 1
-
             fi
 
           done
 
-          cp "$GITHUB_WORKSPACE/sft1200.config" "$DEST/"
+          cp /home/builder/sft1200.config "$DEST/"
 
           cd "$DEST"
 
@@ -357,6 +398,8 @@ jobs:
 
           BUILDER
 
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/ipk-artifacts"
+
       - name: Upload IPK Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -366,9 +409,11 @@ jobs:
           compression-level: 6
           retention-days: 30
 
-      - name: Final Disk Report
+      - name: Final Build Report
         if: always()
         shell: bash
         run: |
+          echo "Build report"
           df -h
-          echo "Build completed"
+          echo "Builder identity:"
+          id builder
