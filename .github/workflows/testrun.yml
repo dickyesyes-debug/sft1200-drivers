@@ -47,12 +47,11 @@ jobs:
             ./scripts/feeds update -a
             ./scripts/feeds install -a
             
-            echo "Checking luci-proto-xmm availability..."
+            echo "Checking and resolving luci-proto-xmm..."
             if ! ./scripts/feeds search luci-proto-xmm | grep -q luci-proto-xmm; then
-              if [ ! -d "package/luci-proto-xmm" ] && [ ! -d "package/feeds/luci/luci-proto-xmm" ]; then
-                echo "FATAL ERROR: luci-proto-xmm is not present in standard GL.iNet SDK feeds."
-                echo "Please provide a valid Git repository to clone the package."
-                exit 1
+              if [ ! -d "package/luci-proto-xmm" ]; then
+                echo "Cloning luci-proto-xmm from external repository..."
+                git clone --depth 1 https://github.com/koshev-msk/luci-proto-xmm.git package/luci-proto-xmm
               fi
             else
               ./scripts/feeds install luci-proto-xmm
@@ -92,11 +91,7 @@ jobs:
             fi
             
             echo "Starting Compilation (luci-proto-xmm)..."
-            if [ -d "package/feeds/luci/luci-proto-xmm" ]; then
-              make package/feeds/luci/luci-proto-xmm/compile -j2 V=s || true
-            else
-              make package/luci-proto-xmm/compile -j2 V=s || true
-            fi
+            make package/luci-proto-xmm/compile -j2 V=s || make package/feeds/luci/luci-proto-xmm/compile -j2 V=s || exit 1
             
             echo "Building package index..."
             make package/index V=s
