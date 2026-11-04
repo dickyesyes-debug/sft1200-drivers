@@ -21,10 +21,11 @@ jobs:
 
       - name: Build Packages inside Ubuntu 20.04 Container
         env:
-          GH_PAT: ${{ secrets.GH_PAT }}
+          # 在此步驟已將變數名稱修正為 GH_TOKEN
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           # 寫入 token 暫存檔，供容器內非特權帳號讀取
-          echo "${GH_PAT}" > gh_pat_temp.txt
+          echo "${GH_TOKEN}" > gh_pat_temp.txt
           
           cat << 'EOF' > build_script.sh
           #!/bin/bash
@@ -46,7 +47,7 @@ jobs:
             # 讀取並驗證 Token
             TOKEN=$(cat gh_pat_temp.txt)
             if [ -z "$TOKEN" ]; then
-              echo "FATAL ERROR: GH_PAT secret is empty. Please check your GitHub Secrets settings."
+              echo "FATAL ERROR: GH_TOKEN secret is empty. Please check your GitHub Secrets settings."
               exit 1
             fi
 
@@ -64,9 +65,9 @@ jobs:
             echo "Checking and resolving luci-proto-xmm..."
             if ! ./scripts/feeds search luci-proto-xmm | grep -q luci-proto-xmm; then
               if [ ! -d "package/luci-proto-xmm" ]; then
-                echo "Cloning luci-proto-xmm from external repository with PAT..."
+                echo "Cloning luci-proto-xmm from external repository with Token..."
                 # 使用 oauth2 格式注入 Token 進行安全 clone
-                git clone --depth 1 "https://oauth2:${TOKEN}@github.com/koshev-msk/luci-proto-xmm.git" package/luci-proto-xmm || { echo "FATAL: Repository not found or PAT has insufficient permissions."; exit 1; }
+                git clone --depth 1 "https://oauth2:${TOKEN}@github.com/koshev-msk/luci-proto-xmm.git" package/luci-proto-xmm || { echo "FATAL: Repository not found or Token has insufficient permissions."; exit 1; }
               fi
             else
               ./scripts/feeds install luci-proto-xmm
