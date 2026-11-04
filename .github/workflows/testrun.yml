@@ -51,8 +51,8 @@ jobs:
             echo "Checking and resolving luci-proto-xmm..."
             if ! ./scripts/feeds search luci-proto-xmm | grep -q luci-proto-xmm; then
               if [ ! -d "package/luci-proto-xmm" ]; then
-                echo "Cloning luci-proto-xmm from external repository..."
-                git clone --depth 1 https://github.com/koshev-msk/luci-proto-xmm.git package/luci-proto-xmm || { echo "FATAL: Repository not found or access denied."; exit 1; }
+                echo "Cloning luci-proto-xmm from external repository with PAT..."
+                git clone --depth 1 https://${{ secrets.GH_PAT }}@github.com/koshev-msk/luci-proto-xmm.git package/luci-proto-xmm || { echo "FATAL: Repository not found or access denied even with PAT."; exit 1; }
               fi
             else
               ./scripts/feeds install luci-proto-xmm
