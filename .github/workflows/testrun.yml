@@ -1,161 +1,105 @@
-name: Build GL-SFT1200 Modems IPKs
+name: Build SFT1200 OpenWrt Firmware & WWAN Drivers
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
-  build:
+  compile-drivers:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Free Disk Space (Host)
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/share/powershell
-          df -h
+    - name: Free Disk Space
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo docker image prune --all --force
+        sudo apt-get clean
 
-      - name: Checkout Code
-        uses: actions/checkout@v4
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
-      - name: Build Packages inside Ubuntu 20.04 Container
-        env:
-          # 在此步驟已將變數名稱修正為 GH_TOKEN
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: |
-          # 寫入 token 暫存檔，供容器內非特權帳號讀取
-          echo "${GH_TOKEN}" > gh_pat_temp.txt
+    - name: Prepare Ubuntu 20.04 Build Container
+      run: |
+        docker run -dit --name openwrt_build ubuntu:20.04 /bin/bash
+        docker exec openwrt_build apt-get update
+        docker exec openwrt_build env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          build-essential python2 python3 git curl wget unzip libncurses5-dev zlib1g-dev gawk flex gettext file
+
+    - name: Setup siflower-1806 SDK & Fix Makefile Errors
+      run: |
+        docker exec openwrt_build /bin/bash -c "
+          # 獲取 GL.iNet 官方源碼
+          git clone -b openwrt-18.06-siflower https://github.com/gl-inet/openwrt.git /openwrt
+          cd /openwrt
           
-          cat << 'EOF' > build_script.sh
-          #!/bin/bash
-          set -e
+          # 更新 feeds
+          ./scripts/feeds update -a
+          
+          # 剔除 gli_pub 中造成解析崩潰的損壞套件
+          rm -rf feeds/gli_pub/luci-proto-wwan
+          rm -rf feeds/gli_pub/luci-proto-qcm
+          rm -rf feeds/gli_pub/luci-proto-callip
+          rm -rf feeds/gli_pub/luci-proto-directip
+          
+          # 注入 OpenWrt 官方 18.06 版本的正常協議套件
+          mkdir -p package/custom_wwan
+          git clone --depth 1 -b openwrt-18.06 https://github.com/openwrt/luci.git /tmp/luci_src
+          cp -r /tmp/luci_src/protocols/luci-proto-wwan package/custom_wwan/
+          cp -r /tmp/luci_src/protocols/luci-proto-qmi package/custom_wwan/
+          cp -r /tmp/luci_src/protocols/luci-proto-mbim package/custom_wwan/
+          
+          # 重新建立安裝清單
+          ./scripts/feeds install -a -f
+        "
 
-          export DEBIAN_FRONTEND=noninteractive
-          apt-get update
-          apt-get install -y build-essential curl wget git python2 python3 python-is-python3 unzip gawk gettext libssl-dev zlib1g-dev libncurses5-dev rsync subversion time sudo
-
-          useradd -m -s /bin/bash builder
-          chown -R builder:builder /workspace
-          chown builder:builder /workspace/gh_pat_temp.txt
-
-          su - builder -c '
-            set -e
-            export GIT_TERMINAL_PROMPT=0
-            cd /workspace
-
-            # 讀取並驗證 Token
-            TOKEN=$(cat gh_pat_temp.txt)
-            if [ -z "$TOKEN" ]; then
-              echo "FATAL ERROR: GH_TOKEN secret is empty. Please check your GitHub Secrets settings."
-              exit 1
-            fi
-
-            echo "Downloading GL.iNet SDK..."
-            git clone https://github.com/gl-inet/sdk.git gl_sdk
-            cd gl_sdk
-            ./download.sh siflower-1806
-            
-            cd sdk/1806/siflower
-            
-            echo "Updating and installing feeds..."
-            ./scripts/feeds update -a
-            ./scripts/feeds install -a
-            
-            echo "Checking and resolving luci-proto-xmm..."
-            if ! ./scripts/feeds search luci-proto-xmm | grep -q luci-proto-xmm; then
-              if [ ! -d "package/luci-proto-xmm" ]; then
-                echo "Cloning luci-proto-xmm from external repository with Token..."
-                # 使用 oauth2 格式注入 Token 進行安全 clone
-                git clone --depth 1 "https://oauth2:${TOKEN}@github.com/koshev-msk/luci-proto-xmm.git" package/luci-proto-xmm || { echo "FATAL: Repository not found or Token has insufficient permissions."; exit 1; }
-              fi
-            else
-              ./scripts/feeds install luci-proto-xmm
-            fi
-            
-            ./scripts/feeds install usb-modeswitch
-
-            echo "Generating .config..."
-            if [ -f configs/config-siflower-1806 ]; then
-              cp configs/config-siflower-1806 .config
-            else
-              make defconfig
-            fi
-            
-            cat << "CFG" >> .config
-            CONFIG_PACKAGE_luci-proto-xmm=m
-            CONFIG_PACKAGE_usb-modeswitch=m
-            CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=m
-            CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=m
-            CONFIG_PACKAGE_kmod-usb-serial-option=m
-            CONFIG_PACKAGE_kmod-usb-serial=m
-            CONFIG_PACKAGE_kmod-usb-serial-wwan=m
-            CONFIG_PACKAGE_kmod-usb-net=m
-            CONFIG_PACKAGE_kmod-usb-wdm=m
-            CFG
-            
-            make defconfig
-
-            echo "Starting Compilation (Kernel Modules)..."
-            make package/kernel/linux/compile -j2 V=s || exit 1
-            
-            echo "Starting Compilation (usb-modeswitch)..."
-            if [ -d "package/utils/usb-modeswitch" ]; then
-              make package/utils/usb-modeswitch/compile -j2 V=s || exit 1
-            else
-              make package/usb-modeswitch/compile -j2 V=s || exit 1
-            fi
-            
-            echo "Starting Compilation (luci-proto-xmm)..."
-            if [ -d "package/luci-proto-xmm" ]; then
-              make package/luci-proto-xmm/compile -j2 V=s || true
-            elif [ -d "package/feeds/luci/luci-proto-xmm" ]; then
-              make package/feeds/luci/luci-proto-xmm/compile -j2 V=s || true
-            fi
-            
-            echo "Building package index..."
-            make package/index V=s
-            
-            echo "Collecting IPK files..."
-            mkdir -p /workspace/output_ipks
-            find bin/ -type f -name "luci-proto-xmm*.ipk" -exec cp {} /workspace/output_ipks/ \;
-            find bin/ -type f -name "usb-modeswitch*.ipk" -exec cp {} /workspace/output_ipks/ \;
-            find bin/ -type f -name "kmod-usb-net-cdc-mbim*.ipk" -exec cp {} /workspace/output_ipks/ \;
-            find bin/ -type f -name "kmod-usb-net-cdc-ncm*.ipk" -exec cp {} /workspace/output_ipks/ \;
-            find bin/ -type f -name "kmod-usb-serial-option*.ipk" -exec cp {} /workspace/output_ipks/ \;
-            find bin/ -type f -name "kmod-usb-serial_*.ipk" -exec cp {} /workspace/output_ipks/ \;
-            find bin/ -type f -name "kmod-usb-serial-wwan*.ipk" -exec cp {} /workspace/output_ipks/ \;
-            find bin/ -type f -name "kmod-usb-net_*.ipk" -exec cp {} /workspace/output_ipks/ \;
-            find bin/ -type f -name "kmod-usb-wdm*.ipk" -exec cp {} /workspace/output_ipks/ \;
-            
-            echo "Verifying IPK integrity..."
-            cd /workspace/output_ipks
-            REQUIRED_PKGS=("luci-proto-xmm" "usb-modeswitch" "kmod-usb-net-cdc-mbim" "kmod-usb-net-cdc-ncm" "kmod-usb-serial-option" "kmod-usb-serial" "kmod-usb-serial-wwan" "kmod-usb-net" "kmod-usb-wdm")
-            MISSING=0
-            
-            for pkg in "${REQUIRED_PKGS[@]}"; do
-              if ! ls ${pkg}*.ipk 1> /dev/null 2>&1; then
-                echo "ERROR: Package $pkg was NOT generated."
-                MISSING=1
-              else
-                echo "SUCCESS: Found $pkg"
-              fi
-            done
-            
-            if [ $MISSING -eq 1 ]; then
-              echo "FATAL: One or more required packages are missing."
-              exit 1
-            fi
-            
-            sha256sum *.ipk > sha256sums.txt
-          '
+    - name: Inject DW5821e & L850-GL Drivers to .config
+      run: |
+        docker exec openwrt_build /bin/bash -c "
+          cd /openwrt
+          make defconfig
+          
+          # 寫入 L850-GL (MBIM) 與 DW5821e (QMI/MBIM) 所需的核心模組與撥號工具
+          cat <<EOF >> .config
+          CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=y
+          CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=y
+          CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
+          CONFIG_PACKAGE_kmod-usb-serial-wwan=y
+          CONFIG_PACKAGE_kmod-usb-serial-option=y
+          CONFIG_PACKAGE_usb-modeswitch=y
+          CONFIG_PACKAGE_luci-proto-wwan=y
+          CONFIG_PACKAGE_luci-proto-qmi=y
+          CONFIG_PACKAGE_luci-proto-mbim=y
+          CONFIG_PACKAGE_uqmi=y
+          CONFIG_PACKAGE_umbim=y
+          CONFIG_PACKAGE_comgt=y
+          CONFIG_PACKAGE_chat=y
+          # SFT1200 硬體目標設定
+          CONFIG_TARGET_siflower=y
+          CONFIG_TARGET_siflower_sf19a28=y
+          CONFIG_TARGET_siflower_sf19a28_DEVICE_gl-sft1200=y
           EOF
-          chmod +x build_script.sh
-          docker run --rm -v ${{ github.workspace }}:/workspace ubuntu:20.04 /workspace/build_script.sh
+          
+          make defconfig
+        "
 
-      - name: Upload IPKs
-        uses: actions/upload-artifact@v4
-        with:
-          name: SFT1200-Modem-IPKs
-          path: output_ipks/
-          if-no-files-found: error
+    - name: Compile OpenWrt Packages
+      run: |
+        docker exec openwrt_build /bin/bash -c "
+          cd /openwrt
+          # 啟用單執行緒 (V=s) 輸出詳細日誌方便排錯，若確認無誤可改為 -j\$(nproc)
+          make -j1 V=s
+        "
+
+    - name: Extract and Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: sft1200-wwan-drivers
+        path: |
+          # 抓取編譯出的 ipk 與韌體
+          /openwrt/bin/packages/**/luci-proto-*.ipk
+          /openwrt/bin/packages/**/kmod-usb-*.ipk
+          /openwrt/bin/targets/*/*/*.bin
