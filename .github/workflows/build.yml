@@ -18,24 +18,19 @@ jobs:
         apt-get update
         apt-get install -y sudo tzdata python2 python-is-python2 build-essential ccache ecj fastjar file g++ gawk gettext git subversion libncurses5-dev libz-dev patch python3 python3-pip unzip zlib1g-dev libssl-dev libglib2.0-dev xsltproc libxml2-utils bc tmux quilt time rsync wget curl perl
         
-        # 設定時區
         ln -fs /usr/share/zoneinfo/Asia/Taipei /etc/localtime
         dpkg-reconfigure --frontend noninteractive tzdata
 
-        # 建立非 root 使用者 builder
         useradd -m -s /bin/bash builder
         echo "builder ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
         
-        # 【關鍵修復】將 GitHub Actions 預設的 home 目錄與工作目錄權限，全數移交給 builder
         chown -R builder:builder /github/home || true
         chown -R builder:builder $GITHUB_WORKSPACE
 
     - name: Build Drivers as Non-Root User
       run: |
         sudo -E -u builder bash -c '
-          # 【關鍵修復】強制重新定義 HOME 變數，阻止 git config 誤闖 root 禁區
           export HOME=/home/builder
-          
           set -e
           cd "$GITHUB_WORKSPACE"
           
@@ -50,11 +45,24 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           
-          # 3. 刪除已知會造成編譯失敗/404 的特定舊套件
+          # 3. 完整焦土政策：刪除所有會導致編譯失敗/404/依賴缺失的套件
           rm -rf package/feeds/gli_pub/iproute2 feeds/gli_pub/iproute2
           rm -rf package/feeds/base/linux-firmware feeds/base/firmware/linux-firmware
           rm -rf package/feeds/base/batman-adv feeds/base/net/batman-adv
-          rm -rf package/feeds/gli_pub/openssl feeds/gli_pub/openssl package/libs/openssl
+          rm -rf package/feeds/gli_pub/openssl feeds/gli_pub/openssl package/libs/openssl feeds/base/package/libs/openssl
+          
+          # 補回漏掉的刪除項目，包含這次報錯的 adb
+          rm -rf feeds/base/openwrt-18.06/package/utils/adb package/feeds/base/adb
+          rm -rf feeds/base/firmware/* package/feeds/base/*firmware*
+          rm -rf feeds/base/package/utils/b43-tools package/feeds/base/b43-tools
+          rm -rf feeds/base/kernel/mac80211 package/feeds/base/mac80211
+          rm -rf feeds/base/net/hostapd package/feeds/base/hostapd
+          rm -rf feeds/base/net/wpa_supplicant package/feeds/base/wpa_supplicant
+          rm -rf feeds/base/kernel/sound package/feeds/base/sound
+          rm -rf feeds/base/kernel/video package/feeds/base/video
+          rm -rf feeds/base/kernel/drm package/feeds/base/drm
+          rm -rf feeds/base/kernel/cryptodev-linux package/feeds/base/cryptodev-linux
+          rm -rf package/kernel/button-hotplug
           
           # 4. 拔除獨立 -Werror 參數
           find . -type f -name "CMakeLists.txt" -exec perl -pi -e "s/(^|\s)-Werror($|\s)/ /g" {} +
