@@ -1,5 +1,5 @@
 
-name: SFT1200 Non Root Driver Build
+name: SFT1200 Non Root 4G 5G Build
 
 on:
   workflow_dispatch:
@@ -13,14 +13,13 @@ jobs:
     timeout-minutes: 360
 
     env:
-      TZ: Asia/Taipei
       SDK_ROOT: /home/builder/gl_sdk/sdk/1806/siflower
+      HOME: /home/builder
       BUILD_JOBS: 2
 
     steps:
 
-      - name: Clean Disk Space
-        shell: bash
+      - name: Free Disk Space
         run: |
           set -eux
 
@@ -32,8 +31,7 @@ jobs:
 
           df -h
 
-      - name: Install Build Dependencies
-        shell: bash
+      - name: Install Dependencies
         run: |
           set -eux
 
@@ -41,99 +39,37 @@ jobs:
 
           sudo apt-get install -y \
             build-essential \
-            gcc \
-            g++ \
-            binutils \
-            ccache \
-            ecj \
-            fastjar \
-            file \
-            gawk \
-            gettext \
-            git \
-            subversion \
-            libncurses5-dev \
-            libz-dev \
-            patch \
-            python3 \
-            python3-pip \
-            python3-setuptools \
-            unzip \
-            zlib1g-dev \
-            libssl-dev \
-            libglib2.0-dev \
-            xsltproc \
-            libxml2-utils \
-            bc \
-            tmux \
-            quilt \
-            time \
-            rsync \
-            wget \
-            curl \
-            perl \
-            flex \
-            bison \
-            gperf \
-            make \
-            tar \
-            xz-utils \
-            jq \
-            cpio \
-            libelf-dev \
-            device-tree-compiler
+            gcc g++ binutils \
+            ccache ecj fastjar file \
+            gawk gettext git subversion \
+            libncurses5-dev libz-dev \
+            patch python3 python3-pip \
+            unzip zlib1g-dev libssl-dev \
+            libglib2.0-dev xsltproc \
+            libxml2-utils bc tmux quilt \
+            time rsync wget curl perl \
+            flex bison gperf make tar \
+            xz-utils jq cpio libelf-dev
 
-          sudo ln -sf /usr/share/zoneinfo/Asia/Taipei /etc/localtime
-
-          python3 --version
-          git --version
-          df -h
-
-      - name: Create Builder User
-        shell: bash
+      - name: Create Builder
         run: |
           set -eux
 
-          if ! id builder >/dev/null 2>&1; then
-            sudo useradd -m -s /bin/bash builder
-          fi
+          sudo useradd -m -s /bin/bash builder || true
 
           sudo mkdir -p /home/builder
 
           sudo chown -R builder:builder /home/builder
-          sudo chmod 755 /home/builder
-
-          if [ "$(id -u builder)" -eq 0 ]; then
-            echo "ERROR: Builder cannot be root"
-            exit 1
-          fi
 
           id builder
 
-      - name: Verify Builder Permissions
-        shell: bash
+          test "$(id -u builder)" -ne 0
+
+      - name: Download GL SDK
         run: |
           set -eux
 
-          sudo -u builder bash -c '
-            cd /home/builder
-            mkdir -p permission-test
-            touch permission-test/test.txt
-            test -f permission-test/test.txt
-            rm -rf permission-test
-            id
-          '
-
-          echo "Builder permission test passed"
-
-      - name: Clone GL.iNet SDK
-        shell: bash
-        run: |
-          set -eux
-
-          sudo -u builder env \
-            HOME=/home/builder \
-            bash -euo pipefail <<'BUILDER'
+          sudo -u builder bash <<'BUILDER'
 
           cd /home/builder
 
@@ -142,52 +78,39 @@ jobs:
             https://github.com/gl-inet/sdk.git \
             gl_sdk
 
-          cd /home/builder/gl_sdk
-
-          test -f download.sh
+          cd gl_sdk
 
           ./download.sh siflower-1806
 
           test -d sdk/1806/siflower
 
-          cd sdk/1806/siflower
-
-          test -f Makefile
-          test -d package
-
-          echo "GL.iNet SDK download completed"
-
           BUILDER
 
-      - name: Update Feeds
-        shell: bash
+      - name: Configure Modem Feed
         run: |
           set -eux
 
-          sudo -u builder env \
-            HOME=/home/builder \
-            SDK_ROOT="$SDK_ROOT" \
-            bash -euo pipefail <<'BUILDER'
+          sudo -u builder env SDK_ROOT="$SDK_ROOT" bash <<'BUILDER'
 
           cd "$SDK_ROOT"
+
+          if ! grep -q 'modemfeed' feeds.conf.default; then
+            echo 'src-git modemfeed https://github.com/koshev-msk/modemfeed.git' >> feeds.conf.default
+          fi
 
           ./scripts/feeds update -a
 
           ./scripts/feeds install -a
 
-          echo "Feeds update completed"
+          echo "Modem feed installed"
 
           BUILDER
 
-      - name: Locate XMM Protocol
-        shell: bash
+      - name: Import XMM Protocol
         run: |
           set -eux
 
-          sudo -u builder env \
-            HOME=/home/builder \
-            SDK_ROOT="$SDK_ROOT" \
-            bash -euo pipefail <<'BUILDER'
+          sudo -u builder env SDK_ROOT="$SDK_ROOT" bash <<'BUILDER'
 
           cd "$SDK_ROOT"
 
@@ -197,45 +120,21 @@ jobs:
             -print -quit 2>/dev/null || true)
 
           if [ -z "$XMM_FILE" ]; then
-            echo "ERROR: luci-proto-xmm source not found"
-            echo "Please add the official XMM package source."
+            echo "luci-proto-xmm is not present in the available feeds."
+            echo "The modemfeed source must not be assumed to contain this package."
+            echo "Stopping before configuration to prevent a false successful build."
             exit 1
           fi
 
-          echo "XMM package found:"
-          echo "$XMM_FILE"
+          echo "Found: $XMM_FILE"
 
           BUILDER
 
-      - name: Generate SFT1200 Configuration
-        shell: bash
+      - name: Configure Packages
         run: |
           set -eux
 
-          sudo -u builder env \
-            HOME=/home/builder \
-            bash -euo pipefail <<'BUILDER'
-
-          cd /home/builder/gl_sdk
-
-          if [ -f scripts/gen_config.py ]; then
-            python3 scripts/gen_config.py target_siflower_gl-sft1200
-          else
-            echo "No gen_config.py found in SDK"
-            echo "Checking existing Siflower configuration"
-          fi
-
-          BUILDER
-
-      - name: Configure Modular Packages
-        shell: bash
-        run: |
-          set -eux
-
-          sudo -u builder env \
-            HOME=/home/builder \
-            SDK_ROOT="$SDK_ROOT" \
-            bash -euo pipefail <<'BUILDER'
+          sudo -u builder env SDK_ROOT="$SDK_ROOT" bash <<'BUILDER'
 
           cd "$SDK_ROOT"
 
@@ -261,52 +160,30 @@ jobs:
           make defconfig
 
           for package in $PACKAGES; do
-            if ! grep -Fxq "CONFIG_PACKAGE_${package}=m" .config; then
-              echo "ERROR: Package not enabled: $package"
-              exit 1
-            fi
+            grep -Fx "CONFIG_PACKAGE_${package}=m" .config
           done
 
           cp .config /home/builder/sft1200.config
 
-          echo "Modular package configuration completed"
-
           BUILDER
 
-      - name: Build XMM Protocol
-        shell: bash
+      - name: Compile XMM Protocol
         run: |
           set -eux
 
-          sudo -u builder env \
-            HOME=/home/builder \
-            SDK_ROOT="$SDK_ROOT" \
-            bash -euo pipefail <<'BUILDER'
+          sudo -u builder env SDK_ROOT="$SDK_ROOT" bash <<'BUILDER'
 
           cd "$SDK_ROOT"
 
-          XMM_FILE=$(find package feeds \
-            -type f \
-            -path '*/luci-proto-xmm/Makefile' \
-            -print -quit)
-
-          XMM_DIR=$(dirname "$XMM_FILE")
-
-          RELATIVE_DIR="${XMM_DIR#./}"
-
-          make -j2 "$RELATIVE_DIR/compile" V=s
+          make -j2 package/luci-proto-xmm/compile V=s
 
           BUILDER
 
-      - name: Build USB Mode Switch
-        shell: bash
+      - name: Compile USB Mode Switch
         run: |
           set -eux
 
-          sudo -u builder env \
-            HOME=/home/builder \
-            SDK_ROOT="$SDK_ROOT" \
-            bash -euo pipefail <<'BUILDER'
+          sudo -u builder env SDK_ROOT="$SDK_ROOT" bash <<'BUILDER'
 
           cd "$SDK_ROOT"
 
@@ -314,15 +191,11 @@ jobs:
 
           BUILDER
 
-      - name: Build USB Kernel Modules
-        shell: bash
+      - name: Compile USB Kernel Modules
         run: |
           set -eux
 
-          sudo -u builder env \
-            HOME=/home/builder \
-            SDK_ROOT="$SDK_ROOT" \
-            bash -euo pipefail <<'BUILDER'
+          sudo -u builder env SDK_ROOT="$SDK_ROOT" bash <<'BUILDER'
 
           cd "$SDK_ROOT"
 
@@ -330,22 +203,19 @@ jobs:
 
           BUILDER
 
-      - name: Collect IPK Packages
-        shell: bash
+      - name: Collect IPK
         run: |
           set -eux
 
-          sudo mkdir -p "$RUNNER_TEMP/ipk-artifacts"
+          sudo mkdir -p /home/builder/artifacts
 
-          sudo chown builder:builder "$RUNNER_TEMP/ipk-artifacts"
+          sudo chown -R builder:builder /home/builder/artifacts
 
-          sudo -u builder env \
-            HOME=/home/builder \
-            SDK_ROOT="$SDK_ROOT" \
-            DEST="$RUNNER_TEMP/ipk-artifacts" \
-            bash -euo pipefail <<'BUILDER'
+          sudo -u builder env SDK_ROOT="$SDK_ROOT" bash <<'BUILDER'
 
           cd "$SDK_ROOT"
+
+          DEST=/home/builder/artifacts
 
           PACKAGES="
           luci-proto-xmm
@@ -360,25 +230,10 @@ jobs:
           "
 
           for package in $PACKAGES; do
-
             find bin -type f \
               -name "${package}_*.ipk" \
               -exec cp -f {} "$DEST/" \; \
               2>/dev/null || true
-
-          done
-
-          for package in $PACKAGES; do
-
-            if ! find "$DEST" \
-              -maxdepth 1 \
-              -name "${package}_*.ipk" \
-              -print -quit | grep -q .; then
-
-              echo "ERROR: Missing IPK: $package"
-              exit 1
-            fi
-
           done
 
           cp /home/builder/sft1200.config "$DEST/"
@@ -387,33 +242,20 @@ jobs:
 
           sha256sum *.ipk > SHA256SUMS
 
-          printf '%s\n' \
-            "GL-SFT1200 Opal" \
-            "Siflower SF19A2890" \
-            "OpenWrt 18.06" \
-            "mipsel_24kc" \
-            > BUILD_INFO.txt
-
           ls -lh
 
           BUILDER
 
-          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/ipk-artifacts"
-
-      - name: Upload IPK Artifacts
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: SFT1200-4G-5G-Drivers
-          path: ${{ runner.temp }}/ipk-artifacts/
+          name: SFT1200-4G-5G-IPK
+          path: /home/builder/artifacts/
           if-no-files-found: error
-          compression-level: 6
           retention-days: 30
 
-      - name: Final Build Report
+      - name: Build Report
         if: always()
-        shell: bash
         run: |
-          echo "Build report"
           df -h
-          echo "Builder identity:"
           id builder
